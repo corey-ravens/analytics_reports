@@ -19,6 +19,7 @@ v13 adds ss and fs
 v14 fills in blank grades for players who don't have enough snaps to get one
 v15 fills in the blank grade text with a statement.
 v16 uses the new endurance grades.
+v17 updates so that if a report for that season already exists, it updates that rather than making a new one.
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -257,7 +258,7 @@ IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
 	WHERE sp.season = 2020
 		AND sp.season_type_adjusted = 'REGPOST'
 		AND snap_count_all >= 50
-	
+
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -889,14 +890,54 @@ OUTPUT TABLES:
 (5)
 
 
-Add the new reports into the reports table.  Create a temp one first so you have the report ids to join the evaluations to, because the official analytics_reports
-table doesn't have enough info to match on.
+Find all the existing reports for the current season. If a player already has a report, it gets updated. If he doesn't, then create a new one.
+
+Write everything into a temp table then DELETE and INSERT into the Analytics table. It's cleaner than running update statements.
 
 OUTPUT TABLES:
 #temp_analytics_reports_with_seasons
 Analytics.dbo.analytics_reports
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+	-- Check if #temp_analytics_reports_with_seasons exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_reports_with_seasons') IS NOT NULL
+	DROP TABLE #temp_analytics_reports_with_seasons
+
+	SELECT re.id
+		,gr.author_id
+		,gr.grade_id
+		,po.id AS position_id
+		,'analytics-pro' AS [type]
+		,0 AS submitted
+		,re.created_at
+		,GETDATE() AS updated_at
+		,rp.bane_player_id AS player_id
+		,rp.alignment
+		,0 AS [imported_with_errors]
+		,0 AS [is_deleted]
+		,'2020 Season' AS [exposure]
+		,NULL AS [import_key]
+		,NULL AS [revised_overall_grade_id]
+		,'' AS [legacy_grade]
+		,NULL AS [stratbridge_season_id]
+		,0 AS [incomplete]
+		,NULL AS [all_star_game_id]
+		,rp.season
+		,rp.season_type_adjusted
+	INTO #temp_analytics_reports_with_seasons
+	FROM Analytics.dbo.analytics_reports re
+	INNER JOIN #temp_season_positions rp
+		ON re.player_id = rp.bane_player_id
+		AND rp.season = 2020
+		AND rp.season_type_adjusted = 'REGPOST'
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON rp.position_blt = po.code
+	INNER JOIN #temp_analytics_grades gr
+		ON rp.bane_player_id = gr.bane_player_id
+		AND rp.season = gr.season
+		AND rp.season_type_adjusted = gr.season_type_adjusted
+	WHERE re.exposure = '2020 Mid Season'
 
 --
 -- Update the next id table to 299999
@@ -910,11 +951,7 @@ Analytics.dbo.analytics_reports
 	DECLARE @next_report_id INT
 	EXEC Analytics.dbo.sp_get_next_surrogate_key 'analytics_reports', @next_report_id OUTPUT
 
-
-	-- Check if #temp_analytics_reports_with_seasons exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_analytics_reports_with_seasons') IS NOT NULL
-	DROP TABLE #temp_analytics_reports_with_seasons
-
+	INSERT INTO #temp_analytics_reports_with_seasons
 	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season, rp.season_type_adjusted) AS id
 		,gr.author_id
 		,gr.grade_id
@@ -936,7 +973,6 @@ Analytics.dbo.analytics_reports
 		,NULL AS [all_star_game_id]
 		,rp.season
 		,rp.season_type_adjusted
-	INTO #temp_analytics_reports_with_seasons
 	FROM #temp_season_positions rp
 	INNER JOIN BaneProductionAnalytics.dbo.positions po
 		ON rp.position_blt = po.code
@@ -944,8 +980,10 @@ Analytics.dbo.analytics_reports
 		ON rp.bane_player_id = gr.bane_player_id
 		AND rp.season = gr.season
 		AND rp.season_type_adjusted = gr.season_type_adjusted
+	WHERE rp.bane_player_id NOT IN (SELECT player_id FROM #temp_analytics_reports_with_seasons)
 
 
+	DELETE FROM Analytics.dbo.analytics_reports WHERE id IN (SELECT id FROM #temp_analytics_reports_with_seasons)
 	INSERT INTO Analytics.dbo.analytics_reports
 	SELECT id
 		,author_id
@@ -967,6 +1005,7 @@ Analytics.dbo.analytics_reports
 		,[incomplete]
 		,[all_star_game_id]
 	FROM #temp_analytics_reports_with_seasons rp
+	ORDER BY id
 
 
 -- Update the next id table with all the ones you just wrote in
@@ -979,13 +1018,45 @@ Analytics.dbo.analytics_reports
 
 (5)
 
+Find all the existing evaluations for the current season. If a player already has an evaluation, it gets updated. If he doesn't, then create a new one.
 
-Add the new evaluations into the evaluatons table.
+Write everything into a temp table then DELETE and INSERT into the Analytics table. It's cleaner than running update statements.
+
 
 OUTPUT TABLES:
+#temp_analytics_evaluations_with_seasons
 Analytics.dbo.analytics_evaluations
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+	-- Check if #temp_analytics_evaluations_with_seasons exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_evaluations_with_seasons') IS NOT NULL
+	DROP TABLE #temp_analytics_evaluations_with_seasons
+
+	SELECT ae.id
+		,ae.skill_id
+		,ISNULL(ev.grade_id,ae.grade_id) AS grade_id
+		,re.id AS report_id
+		,CASE WHEN ev.skill_id IS NULL THEN ae.explanation
+			WHEN ev.skill_id NOT IN (1611) THEN ISNULL(ev.explanation,'Not enough snaps to assign a grade.') 
+			ELSE ev.explanation 
+		END AS explanation
+		,ae.created_at
+		,GETDATE() AS updated_at
+		,CASE WHEN ev.bane_player_id IS NULL THEN 1 ELSE 0 END AS is_deleted
+		,NULL AS interview_id
+		,NULL AS advance_id
+		,ae.skill_code
+	INTO #temp_analytics_evaluations_with_seasons
+	FROM Analytics.dbo.analytics_evaluations ae
+	INNER JOIN Analytics.dbo.analytics_reports re
+		ON ae.report_id = re.id
+		AND re.exposure = '2020 Season'
+	LEFT JOIN #temp_analytics_evaluations ev
+		ON re.player_id = ev.bane_player_id
+		AND ae.skill_id = ev.skill_id
+		AND ev.season = 2020
+		AND ev.season_type_adjusted = 'REGPOST'
 
 --
 -- Update the next id table to 299999
@@ -1000,7 +1071,7 @@ Analytics.dbo.analytics_evaluations
 	EXEC Analytics.dbo.sp_get_next_surrogate_key 'analytics_evaluations', @next_eval_id OUTPUT
 
 
-	INSERT INTO Analytics.dbo.analytics_evaluations
+	INSERT INTO #temp_analytics_evaluations_with_seasons
 	SELECT @next_eval_id  + ROW_NUMBER() OVER (ORDER BY ev.bane_player_id, ev.season, ev.season_type_adjusted, ev.skill_id) AS id
 		,ev.skill_id
 		,ev.grade_id
@@ -1012,11 +1083,30 @@ Analytics.dbo.analytics_evaluations
 		,NULL AS interview_id
 		,NULL AS advance_id
 		,ev.skill_code
-	FROM #temp_analytics_reports_with_seasons re
+	FROM Analytics.dbo.analytics_reports re
 	INNER JOIN #temp_analytics_evaluations ev
 		ON re.player_id = ev.bane_player_id
-		AND re.season = ev.season
-		AND re.season_type_adjusted = ev.season_type_adjusted
+		AND ev.season = 2020
+		AND ev.season_type_adjusted = 'REGPOST'
+	WHERE re.exposure = '2020 Season'
+		AND CONCAT(re.id,'_',ev.skill_id) NOT IN (SELECT CONCAT(report_id,'_',skill_id) FROM #temp_analytics_evaluations_with_seasons)
+
+
+	DELETE FROM Analytics.dbo.analytics_evaluations WHERE report_id IN (SELECT id FROM Analytics.dbo.analytics_reports WHERE exposure = '2020 Season')
+	INSERT INTO Analytics.dbo.analytics_evaluations
+	SELECT id
+		,skill_id
+		,grade_id
+		,report_id
+		,explanation
+		,created_at
+		,updated_at
+		,is_deleted
+		,interview_id
+		,advance_id
+		,skill_code
+	FROM #temp_analytics_evaluations_with_seasons
+	ORDER BY id
 
 
 -- Update the next id table with all the ones you just wrote in
