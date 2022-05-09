@@ -7,7 +7,7 @@ v2 is most up to date overall
 V3 does alignment as a sum of last two college seasons
 v4 fixes overall report position
 v5 takes out quality of comp for 2022 guys
-
+V6 changes from position most played to model position
 
 
 ****make the report position the one he goes in the model as, use alignment for what he plays.
@@ -108,79 +108,6 @@ OUTPUT TABLES:
 #temp_report_positions
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-	-- Check if #temp_draft_season_positions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_draft_season_positions') IS NOT NULL
-	DROP TABLE #temp_draft_season_positions
-
-	SELECT bane_player_id
-		,ag.gsis_player_id
-		,draft_year
-		,draft_year - 1 AS season
-		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('DE43') THEN 'RUSH'
-			WHEN position_blt IN ('DE5T') THEN 'DE'
-			ELSE position_blt
-		END AS position_blt
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('DE5T') THEN 'DE'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
-			ELSE position_blt
-		END AS position_group_blt
-	INTO #temp_draft_season_positions
-	FROM Analytics.dbo.analysis_players_season_position_defense_college de
-	INNER JOIN #temp_model_grades ag
-		ON de.gsis_player_id = ag.gsis_player_id
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON ag.bane_position_id = po.id
-	WHERE position_side_of_ball = 'defense'
-		AND defense_type = 'ALL'
-		AND snap_count_all > 0
-		AND de.season = draft_year - 1
-		AND season_type_adjusted = 'REGPOST'
-
-
-	INSERT INTO #temp_draft_season_positions
-	SELECT bane_player_id
-		,ag.gsis_player_id
-		,draft_year
-		,draft_year - 1 AS season
-		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('DE43') THEN 'RUSH'
-			WHEN position_blt IN ('DE5T') THEN 'DE'
-			ELSE position_blt
-		END AS position_blt
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('DE5T') THEN 'DE'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
-			ELSE position_blt
-		END AS position_group_blt
-	FROM Analytics.dbo.analysis_players_season_position_offense_college de
-	INNER JOIN #temp_model_grades ag
-		ON de.gsis_player_id = ag.gsis_player_id
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON ag.bane_position_id = po.id
-	WHERE position_side_of_ball = 'offense'
-		AND snap_count_all > 0
-		AND de.season = draft_year - 1
-		AND season_type_adjusted = 'REGPOST'
-
 
 	-- Check if #temp_position_snap_counts exists, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_position_snap_counts') IS NOT NULL
@@ -348,14 +275,15 @@ IF OBJECT_ID('tempdb..#temp_report_positions') IS NOT NULL
 	DROP TABLE #temp_report_positions
 
 	SELECT sp.bane_player_id
-		,draft_year
+		--,draft_year
 		,sp.gsis_player_id
-		,sp.season
-		,position_blt
-		,position_group_blt
+		--,sp.season
+		--,position_blt
+		--,position_group_blt
+		,model_position_id
 		,REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(alignment,'LOT','LT'),'LOG','LG'),'ROT','RT'),'ROG','RG'),'WR','WIDE'),'SLT','SLOT') AS alignment
 	INTO #temp_report_positions
-	FROM #temp_draft_season_positions sp
+	FROM #temp_model_grades sp
 	INNER JOIN #temp_season_positions_pivot pv
 		ON sp.bane_player_id = pv.bane_player_id
 
@@ -658,7 +586,8 @@ Analytics.dbo.analytics_reports
 	SELECT re.id
 		,gr.author_id
 		,gr.grade_id
-		,po.id AS position_id
+		,rp.model_position_id AS position_id
+		--,po.id AS position_id
 		,'analytics-college' AS [type]
 		,0 AS submitted
 		,re.created_at
@@ -701,7 +630,8 @@ Analytics.dbo.analytics_reports
 	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season) AS id
 		,gr.author_id
 		,gr.grade_id
-		,po.id AS position_id
+		,rp.model_position_id AS position_id
+		--,po.id AS position_id
 		,'analytics-college' AS [type]
 		,0 AS submitted
 		,GETDATE() AS created_at
