@@ -6,6 +6,11 @@
 v2 is most up to date overall
 V3 does alignment as a sum of last two college seasons
 v4 fixes overall report position
+v5 takes out quality of comp for 2022 guys
+
+
+
+****make the report position the one he goes in the model as, use alignment for what he plays.
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -46,6 +51,7 @@ IF OBJECT_ID('tempdb..#temp_max_college_grade') IS NOT NULL
 	SELECT mg.bane_player_id
 		,ncaa_gsis_id AS gsis_player_id
 		,pl.position_id AS bane_position_id
+		,mp.id AS model_position_id
 		,po.team AS position_side_of_ball
 		,CASE WHEN position IN ('OT','OG','OC') THEN 'OL'
 			WHEN position IN ('DT','DE','OB') THEN 'DL'
@@ -72,9 +78,11 @@ IF OBJECT_ID('tempdb..#temp_max_college_grade') IS NOT NULL
 	INNER JOIN #temp_max_college_grade cg
 		ON mg.bane_player_id = cg.bane_player_id
 		AND cg.college_grade >= 5.7
+	INNER JOIN BaneProductionAnalytics.dbo.positions mp
+		ON mg.position = mp.translation
 	WHERE 1 = 1
 		AND model_grade_id IS NOT NULL
-		--AND draft_model_year = 2021		
+		AND draft_model_year = 2022		
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -404,6 +412,11 @@ OUTPUT TABLES:
 		ON fc.feature = mf.feature
 		AND fc.feature_category = mf.feature_category
 
+	update #temp_feature_contributions
+	set [value] = 1
+	where bane_player_id = 310217
+	and feature = 'pvd_prop_started'
+
 
 	-- Check if #temp_feature_contribution_counts exists, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_feature_contribution_counts') IS NOT NULL
@@ -425,7 +438,8 @@ OUTPUT TABLES:
 	DROP TABLE #temp_feature_contribution_grades
 
 	SELECT fc.*
-		,CASE WHEN fc.feature_category = 'production' AND RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN fc.feature_group_rank > 1 THEN 9999999 ELSE feature_rank END) = 3 THEN 3.5
+		,CASE --WHEN fc.feature_category = 'production' AND RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN fc.feature_group_rank > 1 THEN 9999999 ELSE feature_rank END) = 3 THEN 3.5
+			WHEN fc.feature_category = 'production' AND fc.feature LIKE 'conference%' THEN 999999
 			ELSE RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN fc.feature_group_rank > 1 THEN 9999999 ELSE feature_rank END)
 		END AS feature_display_rank
 		,ABS(feature_contributions) / NULLIF((SELECT SUM(ABS(feature_contributions)) FROM #temp_feature_contributions fc2 WHERE fc.bane_player_id = fc2.bane_player_id),0) AS feature_percentage
@@ -473,7 +487,7 @@ OUTPUT TABLES:
 --Remove the extra quality of comp features, you kept them in initially so you can get accurate percentages that you can join back in.
 	DELETE FROM #temp_feature_contribution_grades
 	WHERE feature LIKE 'conference%'
-		AND feature_display_rank <> 3
+		--AND feature_display_rank <> 3
 
 --Turn any null measurables into a grade of 4
 	UPDATE #temp_feature_contribution_grades
@@ -486,7 +500,9 @@ OUTPUT TABLES:
 /*
 	select *
 	from #temp_feature_contribution_grades
-	where bane_player_id = 261591
+	where bane_player_id IN  (311312, 	310374)
+	--AND feature_display_rank <= 3
+	ORDER BY feature_category, feature_display_rank
 */
 
 	
@@ -514,7 +530,7 @@ OUTPUT TABLES:
 	)
 
 	INSERT INTO #temp_analytics_evaluations
-	SELECT bane_player_id
+	SELECT fc.bane_player_id
 		,CASE WHEN feature_category IN ('measurables') AND feature_display_rank = 1 THEN 1628
 			WHEN feature_category IN ('measurables') AND feature_display_rank = 2 THEN 1629
 			WHEN feature_category IN ('measurables') AND feature_display_rank = 3 THEN 1630
@@ -547,7 +563,10 @@ OUTPUT TABLES:
 		ON fc.feature_grade = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
+	INNER JOIN #temp_model_grades mg
+		ON fc.bane_player_id = mg.bane_player_id
 	WHERE feature_display_rank IN (1,2,3)
+		AND draft_year >= 2022
 	ORDER BY feature_category, feature_display_rank
 
 
@@ -575,6 +594,7 @@ OUTPUT TABLES:
 		,NULL AS grade_id
 		,'' AS explanation
 	FROM #temp_model_grades
+	WHERE draft_year >= 2022
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -658,7 +678,7 @@ Analytics.dbo.analytics_reports
 	FROM Analytics.dbo.analytics_reports re
 	INNER JOIN #temp_report_positions rp
 		ON re.player_id = rp.bane_player_id
-		AND rp.season = 2021
+		AND rp.season = 2022
 	INNER JOIN BaneProductionAnalytics.dbo.positions po
 		ON rp.position_blt = po.code
 	INNER JOIN #temp_model_grades gr
@@ -678,11 +698,11 @@ Analytics.dbo.analytics_reports
 	EXEC Analytics.dbo.sp_get_next_surrogate_key 'analytics_reports', @next_report_id OUTPUT
 
 	INSERT INTO #temp_analytics_reports_with_seasons
-	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season, rp.season_type_adjusted) AS id
+	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season) AS id
 		,gr.author_id
 		,gr.grade_id
 		,po.id AS position_id
-		,'analytics college' AS [type]
+		,'analytics-college' AS [type]
 		,0 AS submitted
 		,GETDATE() AS created_at
 		,GETDATE() AS updated_at
@@ -702,6 +722,7 @@ Analytics.dbo.analytics_reports
 		ON rp.position_blt = po.code
 	INNER JOIN #temp_model_grades gr
 		ON rp.bane_player_id = gr.bane_player_id
+	WHERE rp.draft_year = 2022
 	--WHERE rp.bane_player_id NOT IN (SELECT player_id FROM #temp_analytics_reports_with_seasons)
 
 
