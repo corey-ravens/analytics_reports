@@ -3,9 +3,29 @@
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+v1 is just a work file with lots of info, you can dump it
+v2 is when you start adding structure to the tables
+v3 is when you start adding in report_id and evaluation_id dynamically
+v4 is the almost finalized version where dunamic ids are done at the end, and added into Analytics tables
+v5 is just a slight tweak on v4, where you are manually inserting grades and summaries because those auto tables aren't ready yet. Can loook back at v4 once those are done.
+v6 adds burst.
+v7 adds sorting position alignment by snap count high to low.
+V8 updates the new skill ids
+v9 orders positions from most to least played
+v10 adds skill codes
+v11 adds model grades
+v12
+v13 adds ss and fs 
+v14 fills in blank grades for players who don't have enough snaps to get one
+v15 fills in the blank grade text with a statement.
+v16 uses the new endurance grades.
+v17 updates so that if a report for that season already exists, it updates that rather than making a new one.
+v18 does 40s grades by all players not just this years
+
 tackles
-receivers
+
 versatility
+receivers
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -664,11 +684,23 @@ OUTPUT TABLES:
 		,season
 		,[value] AS projected_forty
 		,RANK() OVER (PARTITION BY player_id, season ORDER BY [order]) AS value_rank
+		,CASE WHEN po.code IN ('NT','DT3T') THEN 'DT'
+			WHEN po.code IN ('OB34','RUSH','SAM','DE43','OB') THEN 'EDGE'
+			WHEN po.code IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
+			WHEN po.code IN ('IB','MIKE','WILL','LB') THEN 'IB'
+			WHEN po.code IN ('CB','NB') THEN 'CB'
+			WHEN po.code IN ('FS','SS','DS') THEN 'DS'
+			WHEN po.code IN ('LOT','LOG','OC','ROG','ROT','OT','OG') THEN 'OL'
+			WHEN po.code IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
+			ELSE po.code
+		END AS position_group_blt
 	INTO #temp_projected_forty_times_ranks
 	FROM Analytics.dbo.bane_forty_summaries ff
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON ff.player_id = pl.id
 		AND pl.is_deleted = 0
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON pl.position_id = po.id
 	WHERE ff.[type] NOT IN ('NGS', 'NGS Special Teams','NGS Off/Def') 
 		AND preferred = 1
 		AND season BETWEEN pl.draft_year - 2 AND pl.draft_year - 1
@@ -679,28 +711,15 @@ OUTPUT TABLES:
 	DROP TABLE #temp_projected_forty_times
 
 	SELECT bane_player_id
+		,position_group_blt
 		,AVG(projected_forty) AS projected_forty
 	INTO #temp_projected_forty_times
 	FROM #temp_projected_forty_times_ranks
 	WHERE value_rank = 1
 	GROUP BY bane_player_id
-
-
-/*
-	-- Check if #temp_projected_forties, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_projected_forties') IS NOT NULL
-	DROP TABLE #temp_projected_forties
-
-	SELECT po.bane_player_id
-		,po.season
 		,position_group_blt
-		,projected_forty
-		,RANK() OVER (PARTITION BY po.season, position_group_blt ORDER BY projected_forty DESC) AS projected_forty_rank
-	INTO #temp_projected_forties
-	FROM #temp_graded_players po
-	INNER JOIN #temp_projected_forty_times p40
-		ON po.bane_player_id = p40.bane_player_id
-*/
+
+
 
 	-- Check if #temp_projected_forties, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_projected_forties') IS NOT NULL
@@ -708,13 +727,12 @@ OUTPUT TABLES:
 
 	SELECT p40.bane_player_id
 		,2021 AS season
-		,position_group_blt
 		,projected_forty
+		,position_group_blt
 		,RANK() OVER (PARTITION BY position_group_blt ORDER BY projected_forty DESC) AS projected_forty_rank
 	INTO #temp_projected_forties
 	FROM #temp_projected_forty_times p40
-	INNER JOIN #temp_blt_positions po
-		ON po.bane_player_id = p40.bane_player_id
+
 
 
 	-- Check if #temp_projected_forty_counts, if it does drop it
@@ -761,7 +779,8 @@ OUTPUT TABLES:
 		AND gr.scale_id = 5
 		AND gr.active = 1
 
-
+SELECT *
+FROM #temp_analytics_play_speeds
 	UPDATE #temp_analytics_evaluations
 	SET grade_id = rs.grade_id
 		,explanation = rs.explanation
