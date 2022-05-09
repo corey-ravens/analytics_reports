@@ -14,6 +14,8 @@ V8 updates the new skill ids
 v9 orders positions from most to least played
 v10 adds skill codes
 v11 adds model grades
+v12
+v13 adds ss and fs and fills in blank grades for players who don't have enough snaps to get one
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -65,13 +67,15 @@ OUTPUT TABLES:
 		,snap_count_de43
 		,snap_count_rush
 		,snap_count_sam
-		,snap_count_ob34
+		--,snap_count_ob34
 		,snap_count_mike
 		,snap_count_will
-		,snap_count_ib
+		--,snap_count_ib
 		,snap_count_cb
 		,snap_count_nb
-		,snap_count_ds
+		--,snap_count_ds
+		,snap_count_fs
+		,snap_count_ss
 		,NULL AS snap_count_qb
 		,NULL AS snap_count_rb
 		,NULL AS snap_count_fb
@@ -118,13 +122,15 @@ OUTPUT TABLES:
 		,NULL AS snap_count_de43
 		,NULL AS snap_count_rush
 		,NULL AS snap_count_sam
-		,NULL AS snap_count_ob34
+		--,NULL AS snap_count_ob34
 		,NULL AS snap_count_mike
 		,NULL AS snap_count_will
-		,NULL AS snap_count_ib
+		--,NULL AS snap_count_ib
 		,NULL AS snap_count_cb
 		,NULL AS snap_count_nb
-		,NULL AS snap_count_ds
+		--,NULL AS snap_count_ds
+		,NULL AS snap_count_fs
+		,NULL AS snap_count_ss
 		,snap_count_qb
 		,snap_count_rb
 		,snap_count_fb
@@ -164,13 +170,15 @@ OUTPUT TABLES:
 										,snap_count_de43
 										,snap_count_rush
 										,snap_count_sam
-										,snap_count_ob34
+										--,snap_count_ob34
 										,snap_count_mike
 										,snap_count_will
-										,snap_count_ib
+										--,snap_count_ib
 										,snap_count_cb
 										,snap_count_nb
-										,snap_count_ds
+										--,snap_count_ds
+										,snap_count_ss
+										,snap_count_fs
 										,snap_count_qb
 										,snap_count_rb
 										,snap_count_fb
