@@ -8,6 +8,7 @@ V3 does alignment as a sum of last two college seasons
 v4 fixes overall report position
 v5 takes out quality of comp for 2022 guys
 V6 changes from position most played to model position
+v7 changes to the position based feature mapping table
 
 
 ****make the report position the one he goes in the model as, use alignment for what he plays.
@@ -61,6 +62,7 @@ IF OBJECT_ID('tempdb..#temp_max_college_grade') IS NOT NULL
 			WHEN position = 'WO' THEN 'WR'
 			ELSE position
 		END AS position_model_group
+		,position AS position_model
 		,draft_model_year
 		,draft_year
 		,162 AS author_id
@@ -79,7 +81,7 @@ IF OBJECT_ID('tempdb..#temp_max_college_grade') IS NOT NULL
 		ON mg.bane_player_id = cg.bane_player_id
 		AND cg.college_grade >= 5.7
 	INNER JOIN BaneProductionAnalytics.dbo.positions mp
-		ON mg.position = mp.translation
+		ON CASE WHEN mg.position = 'WO' THEN 'WR' WHEN mg.position = 'DC' THEN 'CB' WHEN mg.position = 'OH' THEN 'RB' ELSE mg.position END = mp.code
 	WHERE 1 = 1
 		AND model_grade_id IS NOT NULL
 		AND draft_model_year = 2022		
@@ -294,6 +296,9 @@ IF OBJECT_ID('tempdb..#temp_report_positions') IS NOT NULL
 
 Find the model feature contributions - this is how you can get model traits onto a 3-7 scale.
 
+First create a table of their measurables that you can join to feature contributions - we don't want to display measurables that they don't have and are filled in 
+by the model.
+
 Rank the features for each player from biggest to lowest impact (using absolute value, since you just want the biggest impact whether it is good or bad).  As part of
 this, certain features (null, 0, or conferences) that we dont' want to display get assigned a sort value to make sure they won't be in the top 3 display features - 
 but we still want them included in this step to get overall feature contribution percentage.
@@ -314,23 +319,52 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
+-- Check if #temp_measurable_checks exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_measurable_checks') IS NOT NULL
+		DROP TABLE #temp_measurable_checks
+
+	SELECT bane_player_id
+		,measurable_type
+		,measurable_value
+	INTO #temp_measurable_checks
+	FROM Analytics.dbo.draft_model_post_combine_measurables
+	UNPIVOT (measurable_value FOR measurable_type IN (forty_dash
+							,twenty_split
+							,ten_split
+							,flying_twenty
+							,flying_ten
+							,short_shuttle
+							,three_cone
+							,swim_right
+							,rip_left
+							,left_turn
+							,right_turn
+							,broad_jump
+							,vertical_jump
+							)) AS me
+
+
 	-- Check if #temp_feature_contributions exists, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_feature_contributions') IS NOT NULL
 	DROP TABLE #temp_feature_contributions
 
 	SELECT fc.*
-		,CASE WHEN fc.feature = 'ps_play_making' AND mg.position_model_group  ='TE' THEN 'WR' 
+		,CASE WHEN fc.feature = 'ps_play_making' AND mg.position_model_group  = 'TE' THEN 'WR' 
 			WHEN fc.feature IN ('ps_play_making','ps_ball_protection','ps_inside_run','ps_outside_run','ps_pass_blocking','ps_vision_instincts') AND mg.position_model_group  ='TE' THEN 'RB' 
+			WHEN fc.feature IN ('defense passing stats') AND mg.position_model_group IN ('DB') THEN mg.position_model
 			ELSE mg.position_model_group 
 		END AS position_model_group
 		,feature_group
 		,feature_explanation
-		,lower_is_better
-		,RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN ((fc.[value] IS NULL AND fc.feature_category = 'components') OR fc.[value] = 0 OR fc.feature LIKE 'conference%') THEN -999999 ELSE ABS(feature_contributions) END DESC) AS feature_rank
+		,sort_multiplier
+		,RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN ((fc.[value] IS NULL AND fc.feature_category = 'components') OR fc.[value] = 0 OR fc.feature LIKE 'conference%' OR mc.measurable_value IS NULL) THEN -999999 ELSE ABS(feature_contributions) END DESC) AS feature_rank
 		,RANK() OVER (PARTITION BY fc.bane_player_id, feature_group ORDER BY ABS(feature_contributions) DESC) AS feature_group_rank
 		,is_excluded
 	INTO #temp_feature_contributions
 	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions fc
+	LEFT JOIN #temp_measurable_checks mc
+		ON fc.bane_player_id = mc.bane_player_id
+		AND fc.feature = mc.measurable_type
 	INNER JOIN #temp_model_grades mg
 		ON fc.bane_player_id = mg.bane_player_id
 	INNER JOIN #temp_max_college_grade cg
@@ -339,11 +373,14 @@ OUTPUT TABLES:
 	INNER JOIN Analytics.dbo.map_draft_model_features mf
 		ON fc.feature = mf.feature
 		AND fc.feature_category = mf.feature_category
+		AND mg.position_model_group = mf.feature_position_group
+	WHERE fc.draft_model_year = 2022
+		AND fc.draft_model_version = 'post_combine'
 
-	update #temp_feature_contributions
-	set [value] = 1
-	where bane_player_id = 310217
-	and feature = 'pvd_prop_started'
+	--update #temp_feature_contributions
+	--set [value] = 1
+	--where bane_player_id = 310217
+	--and feature = 'pvd_prop_started'
 
 
 	-- Check if #temp_feature_contribution_counts exists, if it does drop it
@@ -372,10 +409,10 @@ OUTPUT TABLES:
 		END AS feature_display_rank
 		,ABS(feature_contributions) / NULLIF((SELECT SUM(ABS(feature_contributions)) FROM #temp_feature_contributions fc2 WHERE fc.bane_player_id = fc2.bane_player_id),0) AS feature_percentage
 		,CASE WHEN cc.feature_count < 10 THEN NULL ELSE
-			(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
-						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
-						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
-						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
+			(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * sort_multiplier DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
+						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * sort_multiplier DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
+						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * sort_multiplier DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
+						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * sort_multiplier DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
 						ELSE 3 
 			END) 
 		END AS feature_grade
@@ -386,6 +423,7 @@ OUTPUT TABLES:
 		AND fc.feature = cc.feature
 		AND fc.position_model_group = cc.position_model_group
 	WHERE is_excluded = 0 --need to do this here because you want them included in the feature percentage calculation
+		AND NOT (fc.feature_category = 'production' AND [value] IS NULL) --need to do this here because you want them included in the feature percentage calculation
 
 
 --Add the quality of competition variables - they are graded differently
@@ -428,7 +466,7 @@ OUTPUT TABLES:
 /*
 	select *
 	from #temp_feature_contribution_grades
-	where bane_player_id IN  (311312, 	310374)
+	where bane_player_id IN  (310564)
 	--AND feature_display_rank <= 3
 	ORDER BY feature_category, feature_display_rank
 */
