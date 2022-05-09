@@ -45,14 +45,16 @@ OUTPUT TABLES:
 		,nfl_player_id
 		,season
 		,season_type_adjusted
-		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DIME'
+		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
 			ELSE position_blt
 		END AS position_blt
 		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
 			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DB'
+			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
 			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			WHEN position_blt IN ('CB','NB') THEN 'CB'
+			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
 			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
 			ELSE position_blt
 		END AS position_group_blt
@@ -101,9 +103,11 @@ OUTPUT TABLES:
 		,position_blt
 		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
 			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DB'
+			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
 			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			WHEN position_blt IN ('CB','NB') THEN 'CB'
+			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
 			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
 			ELSE position_blt
 		END AS position_group_blt
@@ -294,7 +298,7 @@ OUTPUT TABLES:
 		AND gr.active = 1
 	INNER JOIN Analytics.dbo.map_regressed_statistics_to_skill_ids ma
 		ON rs.statistic_id = ma.regressed_statistic_type_id
-		AND rp.position_blt = ma.position_code
+		AND CASE WHEN rp.position_blt = 'DS' THEN 'SS' ELSE rp.position_blt END = ma.position_code
 	INNER JOIN Analytics.dbo.map_regressed_statistic_report_explanations ex
 		ON rs.statistic_id = ex.regressed_statistic_type_id
 	INNER JOIN BaneProductionAnalytics.dbo.skills sk
@@ -311,7 +315,7 @@ Skill IDs of 06/13/2020:
 1586 - endurance (A-END)
 1609 - strength/explosion (A-STR/EXPL)
 
-Strength /Explosion not ready yet as of 09/10/2020, taking it out.
+Strength/Explosion not ready yet as of 09/10/2020, taking it out.
 
 OUTPUT TABLES:
 #temp_analytics_evaluations
@@ -319,7 +323,7 @@ OUTPUT TABLES:
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
 	INSERT INTO #temp_analytics_evaluations 	
-	SELECT bane_player_id
+	SELECT rp.bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
 		,1586 AS skill_id
@@ -343,7 +347,7 @@ OUTPUT TABLES:
 
 /*
 	INSERT INTO #temp_analytics_evaluations 	
-	SELECT bane_player_id
+	SELECT rp.bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
 		,1609 AS skill_id
@@ -382,21 +386,33 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	-- Check if #temp_projected_forty_times, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_projected_forty_times') IS NOT NULL
+	DROP TABLE #temp_projected_forty_times
+
+	SELECT bane_player_id
+		,season
+		,AVG(projected_forty) AS projected_forty
+	INTO #temp_projected_forty_times
+	FROM Analytics.dbo.analysis_players_projected_forty_times
+	GROUP BY bane_player_id
+		,season
+
+
 	-- Check if #temp_projected_forties, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_projected_forties') IS NOT NULL
 	DROP TABLE #temp_projected_forties
 
-	SELECT bane_player_id
+	SELECT po.bane_player_id
 		,po.season
 		,position_group_blt
-		,p40.[value] AS projected_forty
-		,RANK() OVER (PARTITION BY po.season, position_group_blt ORDER BY p40.[value] DESC) AS projected_forty_rank
+		,projected_forty
+		,RANK() OVER (PARTITION BY po.season, position_group_blt ORDER BY projected_forty DESC) AS projected_forty_rank
 	INTO #temp_projected_forties
 	FROM #temp_season_positions po
-	INNER JOIN (SELECT *, RANK() OVER (PARTITION BY player_id ORDER BY season DESC, rep_category DESC) AS forty_rank FROM [BaneProductionAnalytics].dbo.projected_forty_times) AS p40
-		ON po.bane_player_id = p40.player_id
+	INNER JOIN #temp_projected_forty_times p40
+		ON po.bane_player_id = p40.bane_player_id
 		AND po.season = p40.season
-		AND p40.forty_rank = 1
 	WHERE po.season_type_adjusted = 'REGPOST'
 
 
@@ -431,8 +447,8 @@ OUTPUT TABLES:
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
 		ON (CASE WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.90 THEN 7
 				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.75 THEN 6
-				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.25 THEN 5
-				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.10 THEN 4
+				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.40 THEN 5
+				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.15 THEN 4
 				ELSE 3 
 			END) = gr.[value]
 		AND gr.scale_id = 5
@@ -463,10 +479,10 @@ OUTPUT TABLES:
 		,po.season
 		,po.season_type_adjusted
 		,CASE WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
+			WHEN position_blt IN ('FS','SS','DS','DIME') THEN 'DS'
 		END AS position_group_blt
 		,AVG(bu.burst_speed) AS burst_average
-		,RANK() OVER (PARTITION BY po.season, po.season_type_adjusted, CASE WHEN position_blt IN ('CB','NB') THEN 'CB' WHEN position_blt IN ('FS','SS','DS') THEN 'DS' END ORDER BY AVG(bu.burst_speed)) AS burst_average_rank
+		,RANK() OVER (PARTITION BY po.season, po.season_type_adjusted, CASE WHEN position_blt IN ('CB','NB') THEN 'CB' WHEN position_blt IN ('FS','SS','DS','DIME') THEN 'DS' END ORDER BY AVG(bu.burst_speed)) AS burst_average_rank
 	INTO #temp_ranked_bursts
 	FROM #temp_season_positions po
 	INNER JOIN (SELECT pl.id AS bane_player_id, 2019 AS season, 'REGPOST' AS season_type_adjusted, bu2.*, RANK() OVER (PARTITION BY gsis_player_id ORDER BY burst_speed DESC) AS burst_rank FROM AnalyticsWork.dbo.sarah_safety_bursts_20200614 bu2 INNER JOIN BaneProductionAnalytics.dbo.players pl ON bu2.gsis_player_id = pl.nfl_id AND pl.is_deleted = 0) AS bu
@@ -475,12 +491,12 @@ OUTPUT TABLES:
 		AND po.season_type_adjusted = bu.season_type_adjusted
 		AND bu.burst_rank BETWEEN 3 AND 7
 	WHERE po.season_type_adjusted = 'REGPOST'
-		AND position_blt IN ('FS','SS','DS')
+		AND position_blt IN ('FS','SS','DS','DIME')
 	GROUP BY po.bane_player_id
 		,po.season
 		,po.season_type_adjusted
 		,CASE WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
+			WHEN position_blt IN ('FS','SS','DS','DIME') THEN 'DS'
 		END
 
 
@@ -519,8 +535,8 @@ OUTPUT TABLES:
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
 		ON (CASE WHEN (CAST(bu.burst_average_rank AS FLOAT) - 1) / NULLIF(bc.position_count,0) >= 0.90 THEN 7
 				WHEN (CAST(bu.burst_average_rank AS FLOAT) - 1) / NULLIF(bc.position_count,0) >= 0.75 THEN 6
-				WHEN (CAST(bu.burst_average_rank AS FLOAT) - 1) / NULLIF(bc.position_count,0) >= 0.25 THEN 5
-				WHEN (CAST(bu.burst_average_rank AS FLOAT) - 1) / NULLIF(bc.position_count,0) >= 0.10 THEN 4
+				WHEN (CAST(bu.burst_average_rank AS FLOAT) - 1) / NULLIF(bc.position_count,0) >= 0.40 THEN 5
+				WHEN (CAST(bu.burst_average_rank AS FLOAT) - 1) / NULLIF(bc.position_count,0) >= 0.15 THEN 4
 				ELSE 3 
 			END) = gr.[value]
 		AND gr.scale_id = 5
@@ -550,21 +566,6 @@ OUTPUT TABLES:
 		,grade_id
 	INTO #temp_analytics_grades
 	FROM Analytics.dbo.analysis_players_pro_model_grades
-
-
-	--(7037,2019,'REGPOST',70,48)
-	--,(61386,2019,'REGPOST',70,40)
-	--,(3957,2019,'REGPOST',70,46)
-	--,(64417,2019,'REGPOST',70,48)
-	--,(203146,2019,'REGPOST',70,45)
-	--,(2698,2019,'REGPOST',70,46)
-	--,(58798,2019,'REGPOST',70,46)
-	--,(35702,2019,'REGPOST',70,43)
-	--,(4376,2019,'REGPOST',70,45)
-	--,(2606,2019,'REGPOST',70,43)
-	--,(197847,2019,'REGPOST',70,42)
-	--,(71767,2019,'REGPOST',70,45)
-	--,(35287,2019,'REGPOST',70,46)
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
