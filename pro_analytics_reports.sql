@@ -20,6 +20,7 @@ v14 fills in blank grades for players who don't have enough snaps to get one
 v15 fills in the blank grade text with a statement.
 v16 uses the new endurance grades.
 v17 updates so that if a report for that season already exists, it updates that rather than making a new one.
+v18 for 2021
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -255,7 +256,7 @@ IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
 		ON sp.bane_player_id = pv.bane_player_id
 		AND sp.season = pv.season
 		AND sp.season_type_adjusted = pv.season_type_adjusted
-	WHERE sp.season = 2020
+	WHERE sp.season = 2021
 		AND sp.season_type_adjusted = 'REGPOST'
 		AND snap_count_all >= 50
 
@@ -456,16 +457,10 @@ OUTPUT TABLES:
 		END AS played_bucket
 		,played_weeks
 		,pt.snap_count_od
-		,AVG(ee.endurance_percentile) AS endurance_percentile
-		,AVG(eg.fatigue_run_pass_ave) AS fatigue_run_pass_ave
-		,AVG((CASE WHEN eg.projected_reps_run IS NULL AND eg.projected_reps_pass IS NOT NULL THEN 0 ELSE eg.projected_reps_run END + CASE WHEN eg.projected_reps_pass IS NULL AND eg.projected_reps_run IS NOT NULL THEN 0 ELSE eg.projected_reps_pass END) * observed_max_reps) AS projected_reps_avg
+		,AVG(ee.endurance_percentile_season_to_date) AS endurance_percentile
 		,RANK() OVER (PARTITION BY ee.season, po.position_group_blt, CASE WHEN played_weeks <= 4 THEN 1 WHEN played_weeks <= 8 THEN 2 WHEN played_weeks <= 12 THEN 3 WHEN played_weeks IS NOT NULL THEN 4 ELSE NULL END ORDER BY AVG(ee.endurance_percentile) DESC) AS endurance_rank
-		,RANK() OVER (PARTITION BY ee.season, po.position_group_blt, CASE WHEN played_weeks <= 4 THEN 1 WHEN played_weeks <= 8 THEN 2 WHEN played_weeks <= 12 THEN 3 WHEN played_weeks IS NOT NULL THEN 4 ELSE NULL END ORDER BY AVG(eg.fatigue_run_pass_ave) DESC) AS fatigue_rank
 	INTO #temp_new_endurances
 	FROM Analytics.dbo.bane_endurance_grades ee
-	INNER JOIN AnalyticsWork.dbo.observed_reps_endurance_grades_game eg
-		ON ee.gsis_id = eg.gsis_id
-		AND ee.game_key = eg.game_key
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON ee.bane_id = pl.id
 		AND pl.is_deleted = 0
@@ -523,10 +518,10 @@ OUTPUT TABLES:
 		AND en.position_group_blt = co.position_group_blt
 		AND en.played_bucket = co.played_bucket
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
-		ON (CASE WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.90 THEN 7
-				WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.75 THEN 6
-				WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.40 THEN 5
-				WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.15 THEN 4
+		ON (CASE WHEN (position_count - endurance_rank + 1) / CAST(position_count AS FLOAT) >= 0.90 THEN 7
+				WHEN (position_count - endurance_rank + 1) / CAST(position_count AS FLOAT) >= 0.75 THEN 6
+				WHEN (position_count - endurance_rank + 1) / CAST(position_count AS FLOAT) >= 0.40 THEN 5
+				WHEN (position_count - endurance_rank + 1) / CAST(position_count AS FLOAT) >= 0.15 THEN 4
 				ELSE 3 
 			END) = gr.[value]
 		AND gr.scale_id = 5
@@ -543,17 +538,13 @@ OUTPUT TABLES:
 		,1586 AS skill_id
 		,'A-END' AS skill_code
 		,gr.id AS grade_id
-		,CONCAT('Fatigues more than average after '
-			,CEILING(projected_reps_avg)
-			,' reps ('
-				,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3))
-					,CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),2) IN (11,12,13) THEN 'th'
-						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st'
-						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd'
-						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' 
-						ELSE 'th' 
-					END,' percentile).')	
-		) AS explanation
+		,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3))
+			,CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),2) IN (11,12,13) THEN 'th'
+				WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st'
+				WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd'
+				WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' 
+				ELSE 'th' 
+			END,CONCAT(' percentile (able to sustain performance better than ',CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),' out of 100 players at his position).')) AS explanation
 	INTO #temp_analytics_endurance
 	FROM #temp_season_positions rp
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
@@ -626,7 +617,7 @@ OUTPUT TABLES:
 		,season
 		,AVG(projected_forty) AS projected_forty
 	INTO #temp_projected_forty_times
-	FROM Analytics.dbo.analysis_players_projected_forty_times
+	FROM [Analytics].[dbo].[bane_projected_forties]
 	GROUP BY bane_player_id
 		,season
 
@@ -734,7 +725,7 @@ OUTPUT TABLES:
 		,RANK() OVER (PARTITION BY po.season, po.season_type_adjusted, CASE WHEN position_blt IN ('CB','NB') THEN 'CB' WHEN position_blt IN ('FS','SS','DS','DIME') THEN 'DS' END ORDER BY AVG(bu.burst_speed)) AS burst_average_rank
 	INTO #temp_ranked_bursts
 	FROM #temp_season_positions po
-	INNER JOIN (SELECT pl.id AS bane_player_id, 2020 AS season, 'REGPOST' AS season_type_adjusted, bu2.burst_speed, RANK() OVER (PARTITION BY gsis_player_id ORDER BY burst_speed DESC) AS burst_rank FROM AnalyticsWork.dbo.analysis_players_safety_bursts bu2 INNER JOIN BaneProductionAnalytics.dbo.players pl ON bu2.gsis_player_id = pl.nfl_id AND pl.is_deleted = 0) AS bu
+	INNER JOIN (SELECT pl.id AS bane_player_id, 2021 AS season, 'REGPOST' AS season_type_adjusted, bu2.burst_speed, RANK() OVER (PARTITION BY gsis_player_id ORDER BY burst_speed DESC) AS burst_rank FROM AnalyticsSandbox.dbo.analysis_players_safety_bursts bu2 INNER JOIN BaneProductionAnalytics.dbo.players pl ON bu2.gsis_player_id = pl.nfl_id AND pl.is_deleted = 0) AS bu
 		ON po.bane_player_id = bu.bane_player_id
 		AND po.season = bu.season
 		AND po.season_type_adjusted = bu.season_type_adjusted
@@ -825,12 +816,12 @@ OUTPUT TABLES:
 	SELECT bane_player_id
 		,season
 		,'REGPOST' AS season_type_adjusted
-		,70 AS author_id
+		,162 AS author_id
 		,grade_id
 	INTO #temp_analytics_grades
 	FROM Analytics.dbo.analysis_players_pro_model_grades
-	WHERE season = 2020
-		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades)
+	WHERE season = 2021
+		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades WHERE season = 2021)
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -859,8 +850,8 @@ OUTPUT TABLES:
 		,NULL AS grade_id
 		,'' AS explanation
 	FROM Analytics.dbo.analysis_players_pro_model_grades
-	WHERE season = 2020
-		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades)
+	WHERE season = 2021
+		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades WHERE season = 2021)
 
 
 	--INSERT INTO #temp_analytics_evaluations VALUES
@@ -890,6 +881,50 @@ OUTPUT TABLES:
 (5)
 
 
+Get the previous report's grade so that you can put it into the updated report's explanation.
+
+UPDATE TABLES:
+#temp_analytics_evaluations
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+	-- Check if #temp_previous_report_grades exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_previous_report_grades') IS NOT NULL
+	DROP TABLE #temp_previous_report_grades
+
+	SELECT re.id
+		,re.player_id  AS bane_player_id
+		,1611 AS skill_id
+		,CASE WHEN ev.explanation LIKE '' THEN CONCAT('Grade after first six weeks:  Not enough snaps<br />Grade after first twelve weeks:  ',gr.[value])
+			ELSE CONCAT(ev.explanation,'<br />','Grade after first twelve weeks:  ',gr.[value]) 
+		END AS explanation
+	INTO #temp_previous_report_grades
+	FROM Analytics.dbo.analytics_reports re
+	INNER JOIN Analytics.dbo.analytics_evaluations ev
+		ON re.id = ev.report_id
+		AND ev.skill_id = 1611
+	INNER JOIN BaneProductionAnalytics.dbo.grades gr
+		ON re.grade_id = gr.id
+	WHERE re.exposure = '2021 Mid Season'
+
+
+	UPDATE #temp_analytics_evaluations
+		SET explanation  = rg.explanation
+	FROM #temp_previous_report_grades rg
+	WHERE #temp_analytics_evaluations.bane_player_id = rg.bane_player_id
+		AND #temp_analytics_evaluations.skill_id = rg.skill_id
+
+	UPDATE #temp_analytics_evaluations
+		SET explanation  = 'Grade after first six weeks:  Not enough snaps<br />Grade after first twelve weeks:  Not enough snaps'
+	WHERE skill_id = 1611
+		AND explanation = ''
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(6)
+
+
 Find all the existing reports for the current season. If a player already has a report, it gets updated. If he doesn't, then create a new one.
 
 Write everything into a temp table then DELETE and INSERT into the Analytics table. It's cleaner than running update statements.
@@ -916,7 +951,7 @@ Analytics.dbo.analytics_reports
 		,rp.alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
-		,'2020 Season' AS [exposure]
+		,'2021 Full Season' AS [exposure]
 		,NULL AS [import_key]
 		,NULL AS [revised_overall_grade_id]
 		,'' AS [legacy_grade]
@@ -929,7 +964,7 @@ Analytics.dbo.analytics_reports
 	FROM Analytics.dbo.analytics_reports re
 	INNER JOIN #temp_season_positions rp
 		ON re.player_id = rp.bane_player_id
-		AND rp.season = 2020
+		AND rp.season = 2021
 		AND rp.season_type_adjusted = 'REGPOST'
 	INNER JOIN BaneProductionAnalytics.dbo.positions po
 		ON rp.position_blt = po.code
@@ -937,7 +972,7 @@ Analytics.dbo.analytics_reports
 		ON rp.bane_player_id = gr.bane_player_id
 		AND rp.season = gr.season
 		AND rp.season_type_adjusted = gr.season_type_adjusted
-	WHERE re.exposure = '2020 Mid Season'
+	WHERE re.exposure = '2021 Mid Season'
 
 --
 -- Update the next id table to 299999
@@ -964,7 +999,7 @@ Analytics.dbo.analytics_reports
 		,alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
-		,'2020 Season' AS [exposure]
+		,'2021 Full Season' AS [exposure]
 		,NULL AS [import_key]
 		,NULL AS [revised_overall_grade_id]
 		,'' AS [legacy_grade]
@@ -1016,7 +1051,7 @@ Analytics.dbo.analytics_reports
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(5)
+(7)
 
 Find all the existing evaluations for the current season. If a player already has an evaluation, it gets updated. If he doesn't, then create a new one.
 
@@ -1051,11 +1086,11 @@ Analytics.dbo.analytics_evaluations
 	FROM Analytics.dbo.analytics_evaluations ae
 	INNER JOIN Analytics.dbo.analytics_reports re
 		ON ae.report_id = re.id
-		AND re.exposure = '2020 Season'
+		AND re.exposure = '2021 Full Season'
 	LEFT JOIN #temp_analytics_evaluations ev
 		ON re.player_id = ev.bane_player_id
 		AND ae.skill_id = ev.skill_id
-		AND ev.season = 2020
+		AND ev.season = 2021
 		AND ev.season_type_adjusted = 'REGPOST'
 
 --
@@ -1086,13 +1121,13 @@ Analytics.dbo.analytics_evaluations
 	FROM Analytics.dbo.analytics_reports re
 	INNER JOIN #temp_analytics_evaluations ev
 		ON re.player_id = ev.bane_player_id
-		AND ev.season = 2020
+		AND ev.season = 2021
 		AND ev.season_type_adjusted = 'REGPOST'
-	WHERE re.exposure = '2020 Season'
+	WHERE re.exposure = '2021 Full Season'
 		AND CONCAT(re.id,'_',ev.skill_id) NOT IN (SELECT CONCAT(report_id,'_',skill_id) FROM #temp_analytics_evaluations_with_seasons)
 
 
-	DELETE FROM Analytics.dbo.analytics_evaluations WHERE report_id IN (SELECT id FROM Analytics.dbo.analytics_reports WHERE exposure = '2020 Season')
+	DELETE FROM Analytics.dbo.analytics_evaluations WHERE report_id IN (SELECT id FROM Analytics.dbo.analytics_reports WHERE exposure = '2021 Full Season')
 	INSERT INTO Analytics.dbo.analytics_evaluations
 	SELECT id
 		,skill_id
