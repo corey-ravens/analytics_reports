@@ -16,6 +16,7 @@ shaq barrett, john simon, bud dupree have way more rush
 
 v2 - 2021 full season
 v3 - 2021 6 games
+v4 - 2021 13 games
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -559,6 +560,8 @@ IF OBJECT_ID('tempdb..#temp_actives') IS NOT NULL
 		,SUM(CASE WHEN status_roster_simple IN ('FREEAGENT') THEN 1 ELSE 0 END) AS free_agent_weeks
 		,SUM(CASE WHEN status_roster_simple IN ('RETIRED') THEN 1 ELSE 0 END) AS retired_weeks
 		,SUM(snap_count_od) AS snap_count_od
+		,SUM(CASE WHEN [week] < 7 THEN snap_count_od ELSE 0 END) AS snap_count_od_first_third
+		,SUM(CASE WHEN [week] >= 7 THEN snap_count_od ELSE 0 END) AS snap_count_od_second_third
 	INTO #temp_actives
 	FROM #temp_games
 	GROUP BY nfl_player_id
@@ -693,7 +696,7 @@ IF OBJECT_ID('tempdb..#temp_grade_percentiles') IS NOT NULL
 		,(COUNT(*) - CAST(SUM(CASE WHEN grade_bucket >= 5.7 THEN 1 ELSE 0 END) AS FLOAT)) / COUNT(*) AS percentile_57
 		,(COUNT(*) - CAST(SUM(CASE WHEN grade_bucket >= 5.6 THEN 1 ELSE 0 END) AS FLOAT)) / COUNT(*) AS percentile_56
 		,(COUNT(*) - CAST(SUM(CASE WHEN grade_bucket >= 5.4 THEN 1 ELSE 0 END) AS FLOAT)) / COUNT(*) AS percentile_54*/
-	--INTO #temp_grade_percentiles
+	INTO #temp_grade_percentiles
 	FROM #temp_active_grades
 	WHERE 1 = 1
 		AND report_season >= 2018 AND report_season < 2021
@@ -736,7 +739,7 @@ IF OBJECT_ID('tempdb..#temp_player_market_value_2021') IS NOT NULL
 		,mv.market_value_scaled_to_modern_years AS predicted_apy_percent
 		,mv.market_value_scaled_to_modern_years AS predicted_apy_position_swap
 	INTO #temp_player_market_value_2021
-	FROM AnalyticsSandbox.dbo.market_values_rescaled_2021 mv	
+	FROM AnalyticsSandbox.dbo.market_values_rescaled_2021_week_13 mv	
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON mv.bane_id = pl.id
 		AND pl.is_deleted = 0
@@ -778,6 +781,8 @@ IF OBJECT_ID('tempdb..#temp_model_predictions') IS NOT NULL
 		,CASE WHEN ISNULL(ofp.position_blt,po.translation) = 'TE' THEN mv.predicted_apy_position_swap ELSE mv.predicted_apy_percent END * sc.league_salary_cap AS predicted_apy_dollars
 		,po.code
 		,snap_count_od
+		,snap_count_od_first_third
+		,snap_count_od_second_third
 	INTO #temp_model_predictions
 	FROM #temp_actives ac
 	INNER JOIN #temp_player_market_value_2021 mv
@@ -800,7 +805,7 @@ IF OBJECT_ID('tempdb..#temp_model_predictions') IS NOT NULL
 		AND ofp.season_type_adjusted = 'REGPOST'
 		and mv.season = ofp.season
 	WHERE mv.season = 2021
-		AND snap_count_od >= 100
+		AND snap_count_od_second_third >= 100
 	ORDER BY mv.predicted_apy_percent DESC
 
 
@@ -859,6 +864,7 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 		,predicted_apy_rank
 		,code
 		,snap_count_od
+		,snap_count_od_second_third
 		,CASE WHEN position_blt = 'QB' THEN
 			CASE WHEN predicted_apy_percent >= 0.189 THEN '8.0'
 				WHEN predicted_apy_percent >= 0.170 THEN '7.0'
@@ -1006,7 +1012,7 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 				WHEN predicted_apy_percent >= 0.080 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
 				WHEN predicted_apy_percent >= 0.060 THEN '6.3'
 				WHEN predicted_apy_percent >= 0.025 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.007 THEN '5.9'
 				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
 				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
@@ -1028,11 +1034,11 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 				ELSE '5.6'
 			END
 		END AS pro_model_grade
-	--DB
-		,coverage
-		,ball_aware
-		,ISNULL(tackling,runst) AS tackling
-		,safety_range
+	--IB
+		,tackling
+		,lb_range
+		,isnull(run_def_dl,run_def_lb) AS run_def
+		,blitz_pass_rush
 		,play_speed
 		,endurance
 /*
@@ -1093,7 +1099,7 @@ FROM #temp_pro_model_grades mg
 inner join BaneProductionAnalytics.dbo.players pl
 	on mg.bane_player_id = pl.id
 	and pl.is_deleted = 0
-WHERE position_blt IN ('ds')
+WHERE position_blt IN ('FB')
 	--AND draft_year = 2021
 ORDER BY predicted_apy_percent DESC
 
@@ -1115,161 +1121,166 @@ OUTPUT TABLES:
 QB
 --------------*/
 
---Cousins, Kirk; Cousins, Kirk; Jackson, Lamar
+--Herbert, Justin
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (38632,46101,43424)
+WHERE nfl_player_id IN (52414)
 
---Tannehill, Ryan; Ryan, Matt; Mayfield, Baker; Goff, Jared; Jones, Daniel; Lawrence, Trevor; Wentz, Carson
+--Cousins, Kirk
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.7
+WHERE nfl_player_id IN (38632)
+
+--Prescott, Dak; Jackson, Lamar; Ryan, Matt; Burrow, Joe; Tannehill, Ryan
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.3
+WHERE nfl_player_id IN (43424,46101,33084,52409,38538)
+
+--Wilson, Russell; Roethlisberger, Ben; Mayfield, Baker; Jones, Daniel; Garoppolo, Jimmy
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (38538,33084,46070,43290,47789,53430,43291)
+WHERE nfl_player_id IN (38605,28963,46070,47789,41291)
 
---Roethlisberger, Ben
+--Goff, Jared; Wilson, Zach; Fields, Justin
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (28963)
+WHERE nfl_player_id IN (43290,53431,53440)
+
+--Walker, PJ
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id IN (45159)
 
 
 /*-------------
 RB
 --------------*/
 
---Nick Chubb
+--Henry, Derrick; McCaffrey, Christian; Ekeler, Austin; Kamara, Alvin; Jacobs, Josh; Chubb, Nick; Williams, Javonte
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (46104)
+WHERE nfl_player_id IN (43334,44820,45573,44879,47807,46104,53464)
 
---Harris, Damien; McKissic, JD; Davis, Mike; Hunt, Kareem; Ham, CJ; Ingold, Alec
+--Mixon, Joe; Pollard, Tony; FB CJ Ham
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (47870,43722,42469,44898,43256,89044)
+WHERE nfl_player_id IN (44860,47911,43971)
 
---Elliott, Ezekiel; Swift, D'Andre; Harris, Najee; Williams, Javonte; Hines, Nyheim; Pollard, Tony
+--Elliott, Ezekiel; Barkley, Saquon; Mitchell, Elijah; Henderson, Darrell; Hines, Nyheim; Drake, Kenyan; Mattison, Alexander; Bolden, Brandon; Gainwell, Kenny; Stevenson, Rhamondre; FB Jakob Johnson
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (43293, 52443,53453,53464,46173,47911)
+WHERE nfl_player_id IN (43293,46071,53623,47853,46173,43362,47885,39212,53579,53549,47749)
 
---Jacobs, Josh
+--Davis, Mike; Williams, Darrel
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (47807)
-
---Michel, Sony; Booker, Devontae
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 5.8
-WHERE nfl_player_id IN (46100,43425)
+WHERE nfl_player_id IN (42469,46526)
 
 
 /*-------------
 WR
 --------------*/
 
---Hill, Tyreek
+--Hill, Tyreek, Kupp, Cooper
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id in (43454)
+WHERE nfl_player_id in (43454,44881)
 
---Cooks, Brandin; Lamb, CeeDee; Chase, Ja'Marr
+--Godwin, Chris; Lockett, Tyler; Samuel, Deebo; Lamb, CeeDee; Chase, Ja'Marr
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id in (41246,52425,53434)
+WHERE nfl_player_id in (44896,42412,47819,52425,53434)
 
---Cooper, Amari, Evans, Mike; Williams, Mike; Brown, Marquise; Juszczyk, Kyle
+--Evans, Mike; McLaurin, Terry; Johnson, Diontae; Brown, Marquise
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id in (42347,41233,44819,47808,40078)
+WHERE nfl_player_id in (47859,47859,47849,47808)
 
 --Hopkins, DeAndre; Allen, Keenan
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
 WHERE nfl_player_id in (39973,40024)
 
---Robinson, Allen; Mooney, Darnell; Ruggs, Henry; Kirk, Christian; Brown, Antonio; Moore, Rondale; Toney, Kadarius
+--Parker, DeVante; Gallup, Michael; Robinson, Allen; Kirk, Christian; Waddle, Jaylen; Bourne, Kendrick; Renfrow, Hunter; Moore, Rondale; Harris, Deonte
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id in (41290,52581,52420, 46116,35634,53478,53449)
+WHERE nfl_player_id in (42357,46150,41290,46116,53435,45185,47932,53478,48415)
 
---Parker, DeVante; Beckham, Odell; Smith-Schuster, Juju; Jones, Marvin; Davis, Corey; Bourne, Kendrick; Watkins, Quez
+--Sanders, Emmanuel; Smith, Tre'Quan; Jones, Marvin; Meyers, Jakobi; Davis, Gabriel; Watkins, Sammy; Wilson, Cedrick; Toney, Kadarius; Jones, Zay; Westbrook, Nick; Berrios, Braxton
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id in (42357,41238,44874,38696,44817,45185,52608)
+WHERE nfl_player_id in (35521,46160,38696,48097,52536,41230,46277,53449,44849,53074,46279)
 
---Chark, DJ; Robinson, Demarcus; Pringle, Byron; Carter, DeAndre; Sharpe, Tajae; Dulin, Ashton; Schwartz, Anthony
+--Anderson, Robby; Golladay, Kenny; Palmer, Josh; Reynolds, Josh; Brown, Noah
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id in (46130,43415,46522,42794,43429,48118,53520)
-
---Higgins, Rashard; Swain, Freddie; Sanu, Mohamed; Montgomery, Ty; Byrd, Damiere; Hollins, Mack; Johnson, Collin; Hodge, Khadarel
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 5.8
-WHERE nfl_player_id in (43461,52622,38613,42437,42899,44931,52573,46992)
+WHERE nfl_player_id in (43808,44908,53506,44930,45052)
 
 
 /*-------------
 TE
 --------------*/
 
---Waller, Darren; Kittle, George
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (42547,44959)
+WHERE nfl_player_id IN (44959)
 
---Kelce, Travis; Andrews, Mark
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (40011,46155)
+WHERE nfl_player_id IN (46118,46155)
 
---Higbee, Tyler; Hockenson, TJ; Goedert, Dallas; Njoku, David
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (43399,47791,46118,44841)
+WHERE nfl_player_id IN (40078,47879,45268)
 
---Pitts, Kyle
+--
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.7
+WHERE nfl_player_id IN (35481)
+
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (53433)
+WHERE nfl_player_id IN (47791,41349,44841)
 
---Rudolph, Kyle; Engram, Evan; Lewis, Marcedes; Howard, OJ; Tremble, Tommy 
+--
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (37118,44835,30842,44831,53512)
+SET pro_model_grade = 6.1
+WHERE nfl_player_id IN (44912,45785,52526,48456,52523)
 
 
 /*-------------
 OT
 --------------*/
 
---Smith, Tyron
+--
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (7633)
+SET pro_model_grade = 7.0
+WHERE nfl_player_id IN (37082,53442)
 
---Slater, Rashawn
+--
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (53442)
+SET pro_model_grade = 6.7
+WHERE nfl_player_id IN (40023)
 
---Ramczyk, Ryan; O'Neill, Brian; 
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (44844,46131)
-
---Bolles, Garett; Brown, Duane; Humphries, DJ; Tunsil, Laremy; Smith, Donovan
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (44832,33107,42367,43302,42377)
+WHERE nfl_player_id IN (43305,44832,44876,46078,42367,52590,52412)
 
---Dawkins, Dion; Wynn, Isaiah; Matthews, Jake; Thomas, Andrew (need 10 pb and rb for 63)
---Quessenberry, David; Okorafor, Chukwuma; Mekari, Patrick (bump if 11 combined)
+--(need 10 pb and rb for 63)
+--(bump up if 11 combined)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (44875,41232,46092,40124,52412,46161,48220)
+WHERE nfl_player_id IN (52418,38642,41563)
 
---Robinson, Cam; Leatherwood, Alex; Eichenberg, Liam
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (44846,53446,53471)
+WHERE nfl_player_id IN (47818,41222,53471,44846)
 
 
 
@@ -1277,236 +1288,244 @@ WHERE nfl_player_id IN (44846,53446,53471)
 OG
 --------------*/
 
---Bitonio, Joel
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (41264)
+WHERE nfl_player_id IN (41242,41264)
 
---Thuney, Joe
+--
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 7.0
+WHERE nfl_player_id IN (42404)
+
+--(need 12 pb and rb for 70)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (43367)
+WHERE nfl_player_id IN (46075)
 
---Zeitler, Kevin
+--(need 12 pb and rb for 70)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (38557)
+WHERE nfl_player_id IN (42348,38557)
 
---Saffold, Rodger; Williams, Connor; Flowers, Ereck
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (35472,46119,42352)
+WHERE nfl_player_id IN (35472,43345,43045,42352,52543)
 
---Davis, Nate
+--(need 10 pb and rb for 63)
+--(bump up if 11 combined)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (47865)
+WHERE nfl_player_id IN (41310,47824,47865,47906,43510,46119,43484)
 
---Peat, Andrus; Glasgow, Graham; Dickerson, Landon; Cann, AJ; Hunt, Robert; Mayfield, Jalen; Su'a-Filo, Xavier; Daley, Dennis; Garcia, Max
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (42356,43384,53466,42410,52447,53497,41262,47995,42476)
+WHERE nfl_player_id IN (53446,47806,53497,52426,53527,44949)
 
 
 /*-------------
 OC
 --------------*/
 
---Humphrey, Creed
+--
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (53492)
+SET pro_model_grade = 7.0
+WHERE nfl_player_id IN (40151,53492)
 
---Kelly, Ryan
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (43307)
+WHERE nfl_player_id IN (37130,43307)
 
---Bradbury, Garrett; Brown, Evan
+--
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.1
+WHERE nfl_player_id IN (47831,42392,41293,52554,46679)
+
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (47801,46679)
+WHERE nfl_player_id IN (53516,42565)
 
 
 /*-------------
 DT
 --------------*/
 
---Heyward, Cameron
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
+WHERE nfl_player_id IN (41239,47802)
+
+--
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 7.0
 WHERE nfl_player_id IN (37104)
 
---Williams, Quinnen
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (47786)
+WHERE nfl_player_id IN (47796)
 
---Watt, JJ
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (37084)
-
---Cox, Fletcher; Jarrett, Grady; Campbell, Calais; Johnson, Austin
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (38542,42480,33131,43332)
+WHERE nfl_player_id IN (38542,42349,44829,42480,43455,46249,43332,46138)
 
---Hankins, Johnathan; Brockers, Michael; Pierce, Michael; Jones, DaQuan; Reed, Jarran
+--(15 pr, tk, rd for 63)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (39997,38544,43694,41341,43338)
+WHERE nfl_player_id IN (35441,46214,44886,40074,46487,39997,44847,41341,42826,46165)
 
---Williams, Nick; Shelton, Danny; Stephen, Shamar
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (40171,42355,41449)
-
---Butler, Adam
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 5.8
-WHERE nfl_player_id IN (45274)
+WHERE nfl_player_id IN (52464,40171,52792,45274,46098,46438,48032,52538)
 
 
 /*-------------
 EDGE
 --------------*/
 
---Garrett, Myles
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
 WHERE nfl_player_id IN (44813)
 
---Watt, TJ; Crosby, Maxx
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (44842,47889)
+WHERE nfl_player_id IN (47889)
 
---Miller, Von; Jones, Chandler
+--
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.9
+WHERE nfl_player_id IN (47795)
+
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (37075,38551)
+WHERE nfl_player_id IN (38551)
 
---Young, Chase
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (52410)
+WHERE nfl_player_id IN (52410,47799,42360,43358,41227,44915,44915,47934,53467,44944,41269,39959)
 
---Pierre-Paul, Jason; Clark, Frank; Ingram, Melvin; Barnett, Derek
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (35454,42406,38548,44826)
+WHERE nfl_player_id IN (42406,35454,42444,44880,44826,47811,44892,52498,43436,46307,53459,47900)
 
---Reed, Malik; Tillery, Jerry; Lewis, Tyquan; Means, Steven; Cooper, Jonathon
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (48089,47811,46133,40095,53668)
+WHERE nfl_player_id IN (52525,46255,40095,44863,53645,46219)
 
 
 /*-------------
 IB
 --------------*/
 
---Smith, Roquan
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (46077)
+WHERE nfl_player_id IN (53441)
 
---Simmons, Isaiah; Campbell, De'Vondre
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (52416,43404)
-
---Kendricks, Eric; Johnson, AJ
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (42388,47016)
+WHERE nfl_player_id IN (38577,43404)
 
---David, Lavonte; White, Devin; Perryman, Denzel; Wilson, Logan
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (38588,47788,42391,52473)
+WHERE nfl_player_id IN (41235,46212,52416,38555,42391,44869,53481,42929,53487)
 
---Milano, Matt; Barnes, Krys
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (44976,52863)
+WHERE nfl_player_id IN (43325,44976,41300,47793,43388,48516,53489)
+
+--
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id IN (44887)
 
 
 /*-------------
 DC
 --------------*/
 
---Ramsey, Jalen
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
 WHERE nfl_player_id IN (43294)
 
---Reed, DJ; Diggs, Trevon
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (46211,52459)
+WHERE nfl_player_id IN (43351,45287,52424)
 
---Hayward, Casey
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (38592)
-
---Terrell, AJ; Moseley, Emmanuel; Brown, Anthony; Averett, Anthony
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (52424,46354,43478,46187)
+WHERE nfl_player_id IN (44830,53596)
 
---Rhodes, Xavier
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (39971)
+WHERE nfl_player_id IN (46456,47888,37078,45571,42816,46672,53529)
 
---Breeland, Bashaud; Darby, Ronald
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (41331,42393)
+WHERE nfl_player_id IN (47822,53566)
 
 
 /*-------------
 DS
 --------------*/
 
---Simmons, Justin
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (43387)
+WHERE nfl_player_id IN (42485,46086)
 
---Fitzpatrick, Minkah; Byard, Kevin
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (46080,43353)
+WHERE nfl_player_id IN (44854)
 
---Mathieu, Tyrann
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
 WHERE nfl_player_id IN (40017)
 
---Savage, Darnell; Rapp, Taylor; Abram, Johnathan; Fuller, Jordan
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (47804,47844,47810,52607)
+WHERE nfl_player_id IN (52607,52444,53465)
 
---Johnson, Lonnie; Gipson, Tashaun; Moehrig-Woodard, Trevon; McKinney, Xavier; McCain, Bobby
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (47837,38868,53472,52444,42488)
+WHERE nfl_player_id IN (46259,38868,42488)
 
---Burris, Juston; Whitehead, Jordan; Hooker, Malik; Bush, Deon; Stephens, Brandon; Jones, Brandon
+--
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (43407,46186,44827,43413,53533,52478)
+WHERE nfl_player_id IN (43407,42901)
+
 
 
 --6.0 updates for rookie 5.9s who have a 7
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.0
-WHERE nfl_player_id IN (53512,53478,53449,53520,53440,53464,53536,53522,53624,53459,53445,53542,53596,53503,53472,53465)
+WHERE nfl_player_id IN (53609,53500,53506,53553,53522,53527,53645,53521)
+
 
 
 
@@ -1530,7 +1549,6 @@ Analytics.dbo.analysis_players_pro_model_grades
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
---DELETE FROM Analytics.dbo.analysis_players_pro_model_grades WHERE 1=1
 --INSERT INTO Analytics.dbo.analysis_players_pro_model_grades
 	SELECT mg.bane_player_id
 		,mg.nfl_player_id
