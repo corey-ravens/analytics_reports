@@ -17,6 +17,7 @@ v11 adds model grades
 v12
 v13 adds ss and fs 
 v14 fills in blank grades for players who don't have enough snaps to get one
+v15 fills in the blank grade text with a statement.
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -296,6 +297,7 @@ OUTPUT TABLES:
 		ON CASE WHEN rp.position_blt = 'DS' THEN 'SS' ELSE rp.position_blt END = ma.position_code
 	INNER JOIN BaneProductionAnalytics.dbo.skills sk
 		ON ma.skill_id = sk.id
+	WHERE NOT (ma.position_code = 'TE' AND ma.skill_id = 1601)
 
 -- Next the endurance grade
 	INSERT INTO #temp_analytics_evaluations
@@ -374,7 +376,13 @@ OUTPUT TABLES:
 			,CASE WHEN LEFT(explanation_end,1) = '%' THEN '' ELSE ' ' END
 			,CASE WHEN statistic_value < 0 THEN REPLACE(explanation_end,'more','less') ELSE explanation_end END --hard to change this in the map table because sometimes '%' goes before 'more', sometimes it doesn't
 			,' ('
-			,CONCAT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
+			,CONCAT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3))
+				,CASE WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),2) IN (11,12,13) THEN 'th'
+					WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st'
+					WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd'
+					WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' 
+					ELSE 'th' 
+				END,' percentile).')
 		) AS explanation
 	INTO #temp_analytics_regressed_statistics
 	FROM #temp_season_positions rp
@@ -437,7 +445,13 @@ OUTPUT TABLES:
 		,gr.id AS grade_id
 		,CONCAT(projected_reps
 			,' reps before fatigue sets in ('
-			,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
+				,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3))
+					,CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),2) IN (11,12,13) THEN 'th'
+						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st'
+						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd'
+						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' 
+						ELSE 'th' 
+					END,' percentile).')	
 		) AS explanation
 	INTO #temp_analytics_endurance
 	FROM #temp_season_positions rp
@@ -556,7 +570,10 @@ OUTPUT TABLES:
 		,1610 AS skill_id
 		,'A-PLYSPD' AS skill_code
 		,gr.id AS grade_id
-		,CONCAT(LEFT(CAST(ROUND(projected_forty,2) AS VARCHAR(255)),4),' projected 40 based on NGS.') AS explanation
+		,CASE WHEN LEN(CAST(ROUND(projected_forty,2) AS VARCHAR(255))) = 1 THEN CONCAT(LEFT(CAST(ROUND(projected_forty,2) AS VARCHAR(255)),4),'.00 projected 40 based on NGS.') 
+			WHEN LEN(CAST(ROUND(projected_forty,2) AS VARCHAR(255))) = 3 THEN CONCAT(LEFT(CAST(ROUND(projected_forty,2) AS VARCHAR(255)),4),'0 projected 40 based on NGS.') 
+			ELSE CONCAT(LEFT(CAST(ROUND(projected_forty,2) AS VARCHAR(255)),4),' projected 40 based on NGS.') 
+		END AS explanation
 	INTO #temp_analytics_play_speeds
 	FROM #temp_season_positions rp
 	INNER JOIN #temp_projected_forties fo
@@ -792,6 +809,7 @@ WHERE bane_player_id = 35287
 	order by skill_id,season
 */
 
+
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 (5)
@@ -913,7 +931,7 @@ Analytics.dbo.analytics_evaluations
 		,ev.skill_id
 		,ev.grade_id
 		,re.id AS report_id
-		,ev.explanation
+		,CASE WHEN ev.skill_id NOT IN (1611) THEN ISNULL(explanation,'Not enough snaps to assign a grade.') ELSE explanation END AS explanation
 		,GETDATE() AS created_at
 		,GETDATE() AS updated_at
 		,0 AS is_deleted
