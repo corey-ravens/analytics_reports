@@ -17,6 +17,7 @@ shaq barrett, john simon, bud dupree have way more rush
 v2 - 2021 full season
 v3 - 2021 6 games
 v4 - 2021 13 games
+v5 - 2022 18 games
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -185,8 +186,8 @@ OUTPUT TABLES:
 		END AS played_bucket
 		,played_weeks
 		,pt.snap_count_od
-		,AVG(ee.endurance_percentile) AS endurance_percentile
-		,RANK() OVER (PARTITION BY ee.season, po.position_group_blt, CASE WHEN played_weeks <= 4 THEN 1 WHEN played_weeks <= 8 THEN 2 WHEN played_weeks <= 12 THEN 3 WHEN played_weeks IS NOT NULL THEN 4 ELSE NULL END ORDER BY AVG(ee.endurance_percentile) DESC) AS endurance_rank
+		,AVG(ee.endurance_percentile_season_to_date) AS endurance_percentile
+		,RANK() OVER (PARTITION BY ee.season, po.position_group_blt, CASE WHEN played_weeks <= 4 THEN 1 WHEN played_weeks <= 8 THEN 2 WHEN played_weeks <= 12 THEN 3 WHEN played_weeks IS NOT NULL THEN 4 ELSE NULL END ORDER BY AVG(ee.endurance_percentile_season_to_date) DESC) AS endurance_rank
 	INTO #temp_new_endurances
 	FROM Analytics.dbo.bane_endurance_grades ee
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
@@ -561,7 +562,8 @@ IF OBJECT_ID('tempdb..#temp_actives') IS NOT NULL
 		,SUM(CASE WHEN status_roster_simple IN ('RETIRED') THEN 1 ELSE 0 END) AS retired_weeks
 		,SUM(snap_count_od) AS snap_count_od
 		,SUM(CASE WHEN [week] < 7 THEN snap_count_od ELSE 0 END) AS snap_count_od_first_third
-		,SUM(CASE WHEN [week] >= 7 THEN snap_count_od ELSE 0 END) AS snap_count_od_second_third
+		,SUM(CASE WHEN [week] BETWEEN 7 AND 12 THEN snap_count_od ELSE 0 END) AS snap_count_od_second_third
+		,SUM(CASE WHEN [week] > 12 THEN snap_count_od ELSE 0 END) AS snap_count_od_third_third
 	INTO #temp_actives
 	FROM #temp_games
 	GROUP BY nfl_player_id
@@ -601,7 +603,7 @@ DROP TABLE #temp_grades_scouts
 		,CASE WHEN MONTH(re.created_at) < 8 OR (MONTH(re.created_at) = 8 AND DAY(re.created_at) < 15) THEN YEAR(re.created_at)-1 
 			ELSE YEAR(re.created_at) END AS report_season
 		--,ISNULL(rp.translation,po.translation) AS position_report
-		,CASE WHEN po.translation = 'DE' AND po.code <> 'DE5T' THEN 'OB' 
+		,CASE WHEN po.translation = 'DE' AND po.code IN ('DE43') THEN 'OB' 
 			WHEN po.translation = 'DE' THEN 'DT' 
 		ELSE po.translation END AS position_report
 		,CAST(gr.value AS FLOAT) AS grade_bucket       
@@ -671,7 +673,7 @@ IF OBJECT_ID('tempdb..#temp_grade_percentiles') IS NOT NULL
 	DROP TABLE #temp_grade_percentiles
 
 	SELECT position_report
-		,season
+		--,season
 		,SUM(CASE WHEN grade_bucket = 8.0 THEN 1 ELSE 0 END) AS count_80
 		,SUM(CASE WHEN grade_bucket >= 7.0 THEN 1 ELSE 0 END) AS count_70
 		,SUM(CASE WHEN grade_bucket >= 6.9 THEN 1 ELSE 0 END) AS count_69
@@ -702,7 +704,7 @@ IF OBJECT_ID('tempdb..#temp_grade_percentiles') IS NOT NULL
 		AND report_season >= 2018 AND report_season < 2021
 		--AND grade_bucket >= 5.6
 	GROUP BY position_report
-		,season
+		--,season
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -739,7 +741,7 @@ IF OBJECT_ID('tempdb..#temp_player_market_value_2021') IS NOT NULL
 		,mv.market_value_scaled_to_modern_years AS predicted_apy_percent
 		,mv.market_value_scaled_to_modern_years AS predicted_apy_position_swap
 	INTO #temp_player_market_value_2021
-	FROM AnalyticsSandbox.dbo.market_values_rescaled_2021_week_13 mv	
+	FROM AnalyticsSandbox.dbo.market_values_rescaled_2021_week_18_pff_update mv	
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON mv.bane_id = pl.id
 		AND pl.is_deleted = 0
@@ -762,11 +764,11 @@ IF OBJECT_ID('tempdb..#temp_model_predictions') IS NOT NULL
 				WHEN ISNULL(de.position_blt,po.translation) IN ('RUSH','SAM','OB34','DE43','OB') THEN 'EDGE'
 				WHEN ISNULL(de.position_blt,po.translation) IN ('IB','MIKE','WILL') AND po.code NOT IN ('CB','NB') THEN 'IB'
 				WHEN ISNULL(de.position_blt,po.translation) IN ('IB','MIKE','WILL') AND po.code IN ('CB','NB') THEN 'CB'
-				WHEN ISNULL(de.position_blt,po.translation) IN ('NT','DT3T') THEN 'DT'
+				WHEN ISNULL(de.position_blt,po.translation) IN ('NT','DT3T','DT') THEN 'DT'
 				WHEN ISNULL(de.position_blt,po.translation) IN ('SS','FS') THEN 'DS'
 				WHEN ISNULL(de.position_blt,po.translation) IN ('DC','CB','NB') THEN 'CB'
-				WHEN ISNULL(de.position_blt,po.translation) = 'DE5T' AND po.code IN ('DE5T','DT3T','NT') THEN 'DT'
-				WHEN ISNULL(de.position_blt,po.translation) = 'DE5T' THEN 'EDGE'
+				WHEN ISNULL(de.position_blt,po.translation) IN ('DE5T','DE') AND po.code IN ('DE5T','DT3T','NT','DT','DE') THEN 'DT'
+				WHEN ISNULL(de.position_blt,po.translation) IN ('DE5T','DE') THEN 'EDGE'
 				ELSE ISNULL(de.position_blt,po.translation)
 			END
 		 WHEN po.team = 'offense' THEN
@@ -783,6 +785,7 @@ IF OBJECT_ID('tempdb..#temp_model_predictions') IS NOT NULL
 		,snap_count_od
 		,snap_count_od_first_third
 		,snap_count_od_second_third
+		,snap_count_od_third_third
 	INTO #temp_model_predictions
 	FROM #temp_actives ac
 	INNER JOIN #temp_player_market_value_2021 mv
@@ -805,7 +808,7 @@ IF OBJECT_ID('tempdb..#temp_model_predictions') IS NOT NULL
 		AND ofp.season_type_adjusted = 'REGPOST'
 		and mv.season = ofp.season
 	WHERE mv.season = 2021
-		AND snap_count_od_second_third >= 100
+		AND snap_count_od >= 100
 	ORDER BY mv.predicted_apy_percent DESC
 
 
@@ -860,23 +863,24 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 		,DATEDIFF(DD,birth_date,GETDATE()) / 365.25 AS age
 		,position_blt
 		,predicted_apy_percent
-		,predicted_apy_percentile
-		,predicted_apy_rank
+		--,predicted_apy_percentile
+		--,predicted_apy_rank
 		,code
 		,snap_count_od
 		,snap_count_od_second_third
+		,snap_count_od_third_third
 		,CASE WHEN position_blt = 'QB' THEN
 			CASE WHEN predicted_apy_percent >= 0.189 THEN '8.0'
 				WHEN predicted_apy_percent >= 0.170 THEN '7.0'
-				WHEN predicted_apy_percent >= 0.150 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
-				WHEN predicted_apy_percent >= 0.150 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.130 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.120 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.005 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.005 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.158 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
+				WHEN predicted_apy_percent >= 0.158 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
+				WHEN predicted_apy_percent >= 0.150 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.140 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.020 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.01 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt = 'RB' THEN
@@ -887,61 +891,61 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 				WHEN predicted_apy_percent >= 0.030 THEN '6.3'
 				WHEN predicted_apy_percent >= 0.020 THEN '6.1'
 				WHEN predicted_apy_percent >= 0.007 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.005 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.005 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.001 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt IN  ('WIDE','SLOT') THEN
 			CASE WHEN predicted_apy_percent >= 0.120 THEN '8.0'
-				WHEN predicted_apy_percent >= 0.101 THEN '7.0'
-				WHEN predicted_apy_percent >= 0.090 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
-				WHEN predicted_apy_percent >= 0.090 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.069 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.040 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.102 THEN '7.0'
+				WHEN predicted_apy_percent >= 0.093 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
+				WHEN predicted_apy_percent >= 0.093 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
+				WHEN predicted_apy_percent >= 0.060 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.045 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.005 THEN '5.9'
 				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
 				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.001 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt IN  ('TE') AND code NOT IN ('OT','OG','OC') THEN
 			CASE WHEN predicted_apy_percent >= 0.070 THEN '8.0'
 				WHEN predicted_apy_percent >= 0.060 THEN '7.0'
-				WHEN predicted_apy_percent >= 0.050 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
-				WHEN predicted_apy_percent >= 0.050 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.041 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.054 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
+				WHEN predicted_apy_percent >= 0.054 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
+				WHEN predicted_apy_percent >= 0.040 THEN '6.3'
 				WHEN predicted_apy_percent >= 0.025 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.008 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.003 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt IN  ('OT') THEN
 			CASE WHEN predicted_apy_percent >= 0.110 THEN '8.0'
-				WHEN predicted_apy_percent >= 0.085 THEN '7.0'
-				WHEN predicted_apy_percent >= 0.075 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
-				WHEN predicted_apy_percent >= 0.075 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.063 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.090 THEN '7.0'
+				WHEN predicted_apy_percent >= 0.080 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
+				WHEN predicted_apy_percent >= 0.080 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
+				WHEN predicted_apy_percent >= 0.060 THEN '6.3'
 				WHEN predicted_apy_percent >= 0.040 THEN '6.1'
 				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
 				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt IN  ('OG') THEN
-			CASE WHEN predicted_apy_percent >= 0.080 THEN '8.0'
+			CASE WHEN predicted_apy_percent >= 0.079 THEN '8.0'
 				WHEN predicted_apy_percent >= 0.075 THEN '7.0'
-				WHEN predicted_apy_percent >= 0.065 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
-				WHEN predicted_apy_percent >= 0.065 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.050 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.025 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.069 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
+				WHEN predicted_apy_percent >= 0.069 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
+				WHEN predicted_apy_percent >= 0.052 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.031 THEN '6.1'
 				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
 				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
 				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
@@ -955,10 +959,10 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 				WHEN predicted_apy_percent >= 0.058 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
 				WHEN predicted_apy_percent >= 0.058 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
 				WHEN predicted_apy_percent >= 0.050 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.045 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.016 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.040 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
 				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
@@ -966,29 +970,29 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 		WHEN position_blt = 'DT' THEN
 			CASE WHEN predicted_apy_percent >= 0.129 THEN '8.0'
 				WHEN predicted_apy_percent >= 0.120 THEN '7.0'
-				WHEN predicted_apy_percent >= 0.090 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
-				WHEN predicted_apy_percent >= 0.090 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.045 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.020 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.091 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
+				WHEN predicted_apy_percent >= 0.091 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
+				WHEN predicted_apy_percent >= 0.050 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.023 THEN '6.1'
 				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
 				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt = 'EDGE' THEN
 			CASE WHEN predicted_apy_percent >= 0.140 THEN '8.0'
-				WHEN predicted_apy_percent >= 0.120 THEN '7.0'
+				WHEN predicted_apy_percent >= 0.112 THEN '7.0'
 				WHEN predicted_apy_percent >= 0.090 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
 				WHEN predicted_apy_percent >= 0.090 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
 				WHEN predicted_apy_percent >= 0.070 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.045 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.018 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.005 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.005 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.030 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.003 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt = 'IB' THEN
@@ -996,41 +1000,41 @@ IF OBJECT_ID('tempdb..#temp_pro_model_grades') IS NOT NULL
 				WHEN predicted_apy_percent >= 0.095 THEN '7.0'
 				WHEN predicted_apy_percent >= 0.075 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
 				WHEN predicted_apy_percent >= 0.075 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.055 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.030 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.050 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.028 THEN '6.1'
 				WHEN predicted_apy_percent >= 0.015 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.007 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.007 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
 				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt = 'CB' THEN
-			CASE WHEN predicted_apy_percent >= 0.110 THEN '8.0'
+			CASE WHEN predicted_apy_percent >= 0.105 THEN '8.0'
 				WHEN predicted_apy_percent >= 0.085 THEN '7.0'
 				WHEN predicted_apy_percent >= 0.080 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
 				WHEN predicted_apy_percent >= 0.080 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
 				WHEN predicted_apy_percent >= 0.060 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.025 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.007 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.030 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.003 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		WHEN position_blt = 'DS' THEN
 			CASE WHEN predicted_apy_percent >= 0.090 THEN '8.0'
-				WHEN predicted_apy_percent >= 0.080 THEN '7.0'
+				WHEN predicted_apy_percent >= 0.078 THEN '7.0'
 				WHEN predicted_apy_percent >= 0.070 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 >= 29 THEN '6.7'
 				WHEN predicted_apy_percent >= 0.070 AND DATEDIFF(DD,birth_date,GETDATE()) / 365.2425 < 29 THEN '6.9'
-				WHEN predicted_apy_percent >= 0.039 THEN '6.3'
-				WHEN predicted_apy_percent >= 0.026 THEN '6.1'
-				WHEN predicted_apy_percent >= 0.010 THEN '5.9'
-				WHEN predicted_apy_percent >= 0.004 AND on_53_weeks = 0 THEN '5.7'
-				WHEN predicted_apy_percent >= 0.004 THEN '5.8'
+				WHEN predicted_apy_percent >= 0.037 THEN '6.3'
+				WHEN predicted_apy_percent >= 0.024 THEN '6.1'
+				WHEN predicted_apy_percent >= 0.008 THEN '5.9'
+				WHEN predicted_apy_percent >= 0.003 AND on_53_weeks = 0 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.003 THEN '5.8'
 				WHEN on_53_weeks = 0 THEN '5.6'
-				WHEN predicted_apy_percent >= 0.003 THEN '5.7'
+				WHEN predicted_apy_percent >= 0.002 THEN '5.7'
 				ELSE '5.6'
 			END
 		END AS pro_model_grade
@@ -1099,11 +1103,9 @@ FROM #temp_pro_model_grades mg
 inner join BaneProductionAnalytics.dbo.players pl
 	on mg.bane_player_id = pl.id
 	and pl.is_deleted = 0
-WHERE position_blt IN ('FB')
+WHERE position_blt IN ('ib')
 	--AND draft_year = 2021
-ORDER BY predicted_apy_percent DESC
-
-
+ORDER BY predicted_apy_percent DESC 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1121,411 +1123,456 @@ OUTPUT TABLES:
 QB
 --------------*/
 
---Herbert, Justin
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (52414)
-
---Cousins, Kirk
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (38632)
-
---Prescott, Dak; Jackson, Lamar; Ryan, Matt; Burrow, Joe; Tannehill, Ryan
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (43424,46101,33084,52409,38538)
-
---Wilson, Russell; Roethlisberger, Ben; Mayfield, Baker; Jones, Daniel; Garoppolo, Jimmy
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (38605,28963,46070,47789,41291)
-
---Goff, Jared; Wilson, Zach; Fields, Justin
+--Goff, Jared; Roethlisberger, Ben 
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (43290,53431,53440)
-
---Walker, PJ
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 5.8
-WHERE nfl_player_id IN (45159)
+WHERE nfl_player_id IN (43290,28963)
 
 
 /*-------------
 RB
 --------------*/
 
---Henry, Derrick; McCaffrey, Christian; Ekeler, Austin; Kamara, Alvin; Jacobs, Josh; Chubb, Nick; Williams, Javonte
+--Ekeler, Austin;Chubb, Nick
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (43334,44820,45573,44879,47807,46104,53464)
+WHERE nfl_player_id IN (45573,46104)
 
---Mixon, Joe; Pollard, Tony; FB CJ Ham
+--Mixon, Joe;Williams, Javonte;Carter, Michael;Pollard, Tony
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (44860,47911,43971)
+WHERE nfl_player_id IN (44860,53464,53536,47911)
 
---Elliott, Ezekiel; Barkley, Saquon; Mitchell, Elijah; Henderson, Darrell; Hines, Nyheim; Drake, Kenyan; Mattison, Alexander; Bolden, Brandon; Gainwell, Kenny; Stevenson, Rhamondre; FB Jakob Johnson
+--Elliott, Ezekiel;Henderson, Darrell;Hines, Nyheim;Johnson, D'Ernest;Gainwell, Kenny;Stevenson, Rhamondre
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (43293,46071,53623,47853,46173,43362,47885,39212,53579,53549,47749)
+WHERE nfl_player_id IN (43293,47853,46173,47605,53579.53549)
 
---Davis, Mike; Williams, Darrel
+--Michel, Sony;Gaskin, Myles;Booker, Devontae
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (42469,46526)
+WHERE nfl_player_id IN (46100,48017,43425)
+
+
+/*-------------
+FB
+--------------*/
+
+--Juszczyk, Kyle;Ricard, Patrick
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.9
+WHERE nfl_player_id IN (40078,45268)
+
+--Ham, CJ;Ingold, Alec
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.3
+WHERE nfl_player_id IN (43971,48233)
+
+--Johnson, Jakob;Burton, Michael;Gilliam, Reggie
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.1
+WHERE nfl_player_id IN (47749,42511,53079)
+
+--Prentice, Adam;Smith, Keith
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.9
+WHERE nfl_player_id IN (53932,41808)
+
+--Ricci, Giovanni;Cabinda, Jason
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.9
+WHERE nfl_player_id IN (52858,46424)
 
 
 /*-------------
 WR
 --------------*/
 
---Hill, Tyreek, Kupp, Cooper
+--Hill, Tyreek
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id in (43454,44881)
+WHERE nfl_player_id in (43454)
 
---Godwin, Chris; Lockett, Tyler; Samuel, Deebo; Lamb, CeeDee; Chase, Ja'Marr
+--Chase, Ja'Marr
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id in (44896,42412,47819,52425,53434)
+WHERE nfl_player_id in (53434)
 
---Evans, Mike; McLaurin, Terry; Johnson, Diontae; Brown, Marquise
+--Bourne, Kendrick;Brown, AJ
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id in (47859,47859,47849,47808)
+WHERE nfl_player_id in (45185,47834)
 
---Hopkins, DeAndre; Allen, Keenan
+--Hopkins, DeAndre
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id in (39973,40024)
+WHERE nfl_player_id in (39973)
 
---Parker, DeVante; Gallup, Michael; Robinson, Allen; Kirk, Christian; Waddle, Jaylen; Bourne, Kendrick; Renfrow, Hunter; Moore, Rondale; Harris, Deonte
+--Cooper, Amari;Gallup, Michael
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id in (42357,46150,41290,46116,53435,45185,47932,53478,48415)
+WHERE nfl_player_id in (42347,46150)
 
---Sanders, Emmanuel; Smith, Tre'Quan; Jones, Marvin; Meyers, Jakobi; Davis, Gabriel; Watkins, Sammy; Wilson, Cedrick; Toney, Kadarius; Jones, Zay; Westbrook, Nick; Berrios, Braxton
+--Parker, DeVante;Golladay, Kenny;Anderson, Robby;Moore, Rondale;Jackson, DeSean;Green, AJ;Smith-Schuster, Juju;Chark, DJ;Ruggs, Henry;Harris, Deonte
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id in (35521,46160,38696,48097,52536,41230,46277,53449,44849,53074,46279)
+WHERE nfl_player_id in (42357,44908,43808,53478,33130,37077,44874,46130,52420,48415)
 
---Anderson, Robby; Golladay, Kenny; Palmer, Josh; Reynolds, Josh; Brown, Noah
+--Perriman, Breshad;Ford, Isaiah
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id in (43808,44908,53506,44930,45052)
+WHERE nfl_player_id in (42369,45050)
+
+--Hollister, Cody;Arcega-Whiteside, JJ
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id in (45280,47840)
 
 
 /*-------------
 TE
 --------------*/
 
---
+--Kittle, George;Andrews, Mark
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (44959)
+WHERE nfl_player_id IN (44959,46155)
 
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (46118,46155)
-
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (40078,47879,45268)
-
---
+--Waller, Darren
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (35481)
+WHERE nfl_player_id IN (42547)
 
---
+--Hockenson, TJ;Smith, Jonnu;Okwuegbunam, Albert
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (47791,41349,44841)
+WHERE nfl_player_id IN (47791,44912,52526)
 
---
+--Bryant, Harrison;Bates, John;Deguara, Josiah;Anderson, Stephen;Thomas, Logan;Engram, Evan;Williams, Maxx
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (44912,45785,52526,48456,52523)
+WHERE nfl_player_id IN (52523,53553,52502,43845,41349,44835,42398)
+
+--Bell, Blake;Saubert, Eric;Daniels, Darrell;Ebron, Eric
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.9
+WHERE nfl_player_id IN (42460,44987,45142,41236)
 
 
 /*-------------
 OT
 --------------*/
 
---
+--Smith, Tyron
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 8.0
+WHERE nfl_player_id IN (37082)
+
+--Slater, Rashawn
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (37082,53442)
+WHERE nfl_player_id IN (53442)
 
---
+--Ramczyk, Ryan
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.9
+WHERE nfl_player_id IN (44844)
+
+--Johnson, Lane
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (40023)
+WHERE nfl_player_id IN (39950)
 
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (43305,44832,44876,46078,42367,52590,52412)
-
---(need 10 pb and rb for 63)
---(bump up if 11 combined)
+--(need 10 pb and rb for 63) Humphries, DJ;Decker, Taylor;Wills, Jedrick;Reiff, Riley;Tunsil, Laremy;Cannon, Marcus;Lewan, Taylor
+--(bump up if 11 combined)  Compton, Tom;Pryor, Matt
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (52418,38642,41563)
+WHERE nfl_player_id IN (42367,43305,52418,38553,38723,46275,43302,37213,41237)
 
---
+--Taylor, Jawaan;Turner, Billy;Villanueva, Alejandro;Eichenberg, Liam;Moore, Dan
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (47818,41222,53471,44846)
+WHERE nfl_player_id IN (47818,41296,41222,53471,53557)
 
+--Parker, Brandon;Nelson, Matt
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id IN (46134,48455)
 
 
 /*-------------
 OG
 --------------*/
 
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (41242,41264)
-
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (42404)
-
---(need 12 pb and rb for 70)
+--(need 12 pb and rb for 70) Nelson, Quenton
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
 WHERE nfl_player_id IN (46075)
 
---(need 12 pb and rb for 70)
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (42348,38557)
-
---
+--Dotson, Kevin;Runyan, Jon;Karras, Ted;Onwenu, Mike;Williams, Connor
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (35472,43345,43045,42352,52543)
+WHERE nfl_player_id IN (52543,52600,43510,52590,46119)
 
---(need 10 pb and rb for 63)
+--(need 10 pb and rb for 63) Schweitzer, Wes;Saffold, Rodger;Jackson, Gabe;Cann, AJ;Seumalo, Isaac
 --(bump up if 11 combined)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (41310,47824,47865,47906,43510,46119,43484)
+WHERE nfl_player_id IN (43484,35472,41310,42410,43368)
 
---
+--Howard, Tytus;Mayfield, Jalen;Udoh, Olisaemeka;Harlow, Sean;Schofield, Michael;Bates, Ryan;Leatherwood, Alex;Peat, Andrus;Cleveland, Ben
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (53446,47806,53497,52426,53527,44949)
+WHERE nfl_player_id IN (47806,53497,47976,44949,41324,48512,53446,42356,53523)
+
+--Throckmorton, Calvin
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id IN (52666)
 
 
 /*-------------
 OC
 --------------*/
 
---
+--Linsley, Corey
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (40151,53492)
+WHERE nfl_player_id IN (41390)
 
---
+--Ragnow, Frank
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.9
+WHERE nfl_player_id IN (46089)
+
+--Kelly, Ryan
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (37130,43307)
+WHERE nfl_player_id IN (43307)
 
---
+--Clapp, Will
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (47831,42392,41293,52554,46679)
-
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (53516,42565)
+SET pro_model_grade = 5.7
+WHERE nfl_player_id IN (85616)
 
 
 /*-------------
 DT
 --------------*/
 
---
+--Simmons, Jeffery;Heyward, Cameron
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (41239,47802)
+WHERE nfl_player_id IN (47802,37104)
 
---
-UPDATE #temp_pro_model_grades
-SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (37104)
-
---
+--Wilkins, Christian;Armstead, Arik
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (47796)
+WHERE nfl_player_id IN (47796,42360)
 
---
+--Watt, JJ
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.7
+WHERE nfl_player_id IN (37084)
+
+--Pierce, Michael;Sieler, Zach;Jones, DJ;Johnson, Austin;Fatukasi, Folorunso;Hill, BJ;Phillips, Harrison;Robinson, A'Shawn
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (38542,42349,44829,42480,43455,46249,43332,46138)
+WHERE nfl_player_id IN (43694,46307,45011,43332,46249,46138,46165,43335)
 
---(15 pr, tk, rd for 63)
+--(15 pr, tk, rd for 63) Wormley, Chris;Jones, DaQuan;Hankins, Johnathan;McDowell, Malik;Jones, Justin;Brown, Malcom
+--(bump from 5.9 if 16 pr, tk, rd)  Williams, DeShawn;Nelson, Anthony;Tuttle, Shy
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (35441,46214,44886,40074,46487,39997,44847,41341,42826,46165)
+WHERE nfl_player_id IN (44886,41341,39997,44847,46153,42375,42826,47890,48544)
 
---
+--(need 11 pr, tk, rd for 6.1)  Urban, Brent;Williams, Nick;Davis, Raekwon;Gallimore, Neville;Hill, Trysten;Zimmer, Justin;Tart, Teair
+--(bump from 5.8 if 15 pr, tk, rd) Dogbe, Michael;Shelton, Danny;Ringo, Christian;Slaton, TJ;Togiai, Tommy
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (52464,40171,52792,45274,46098,46438,48032,52538)
+WHERE nfl_player_id IN (41363,40171,52464,52490,47841,43638,53073,48032,42355,42553,53602,53561)
 
 
 /*-------------
 EDGE
 --------------*/
 
---
+--Bosa, Nick;Crosby, Maxx
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (44813)
+WHERE nfl_player_id IN (47785,47889)
 
---
+--Watt, TJ
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (47889)
+WHERE nfl_player_id IN (44842,47790)
 
---
+--Franklin, John
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (47795)
+WHERE nfl_player_id IN (46204)
 
---
+--Jones, Chandler
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
 WHERE nfl_player_id IN (38551)
 
---
+--(15 pr, tk, rd for 67) Ngakoue, Yannick;Mack, Khalil;Hendrickson, Trey;Sweat, Montez;Burns, Brian;Rousseau, Gregory
+--(bump if 18) Dunlap, Carlos
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (52410,47799,42360,43358,41227,44915,44915,47934,53467,44944,41269,39959)
+WHERE nfl_player_id IN (43358,41231,44915,47809,47799,35493,53459)
 
---
+--(14 pr, tk, rd for 63) Clark, Frank; Griffen, Everson;Okwara, Romeo;Wonnum, DJ;Green, Rasheem;Flowers, Trey;Smoot, Dawuane;Paye, Kwity;Barnett, Derek
+-- bump if 17 Kennard, Devon; Nassib, Carl
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (42406,35454,42444,44880,44826,47811,44892,52498,43436,46307,53459,47900)
+WHERE nfl_player_id IN (42406,35539,43775,52525,46148,42444,44880,53450,44826,41403,43354)
 
---
+--(12 to stay 61) Dupree, Bud;Huff, Bryce;Means, Steven;Mayowa, Benson
+--Basham, Carlos;Charlton, Taco;Jackson, Tarron;Copeland, Brandon
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (52525,46255,40095,44863,53645,46219)
+WHERE nfl_player_id IN (42365,53053,40095,40825,53490,44840,53620,40463)
+
+-- Attaochu, Jeremiah;Irvin, Bruce;Vaughters, James
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id IN (41279,38545,42869)
 
 
 /*-------------
 IB
 --------------*/
 
---
+--Parsons, Micah
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 7.0
+SET pro_model_grade = 8.0
 WHERE nfl_player_id IN (53441)
 
---
+--Thompson, Shaq;Bentley, Ja'Whaun
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.9
+WHERE nfl_player_id IN (42368,46212)
+
+--Davis, Demario;Campbell, De'Vondre;Mosley, CJ;Perryman, Denzel
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (38577,43404)
+WHERE nfl_player_id IN (38607,43404,41243,42391)
 
---
+--(drop a level if not 15) Barr, Anthony;Jones, Deion;Bolton, Nick;Edwards, TJ
+--Cunningham, Zach;Werner, Pete
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (41235,46212,52416,38555,42391,44869,53481,42929,53487)
+WHERE nfl_player_id IN (41235,43341,44869,53487,48516,53489)
 
---
+--(drop a level if not 15) Milano, Matt;Martinez, Blake;Jack, Myles;Okereke, Bobby;Baker, Jerome;Kirksey, Christian;Schobert, Joe;Anzalone, Alex
+--Bynes, Josh;Jones, Ernest;Griffith, Jonas;Luvu, Frankie
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (43325,44976,41300,47793,43388,48516,53489)
+WHERE nfl_player_id IN (44976,43420,43325,47872,46142,41300,43388,44888,37778,53532,52706,46527)
 
---
+--Bush, Devin (drop if not 13) Greenlaw, Dre;Murray, Kenneth;Browning, Baron;Bostic, Jon;Neal, Keanu
+--Spillane, Robert;Barnes, Derrick;Wilson, Eric;Wilson, Mack;Bailey, Markus'Collins, Jamie;Howard, Travin;Hewitt, Neville
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.9
+WHERE nfl_player_id IN (47793,47931,52431,53534,39998,43306,46902,53542,45215,47938,52623,40000,46300,42771)
+
+--Board, Chris;Harris, Marcell
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.8
-WHERE nfl_player_id IN (44887)
+WHERE nfl_player_id IN (46958,46253)
 
 
 /*-------------
 DC
 --------------*/
 
---
+--Slay, Darius;Alexander, Jaire;Terrell, AJ
 UPDATE #temp_pro_model_grades
-SET pro_model_grade = 8.0
-WHERE nfl_player_id IN (43294)
+SET pro_model_grade = 7.0
+WHERE nfl_player_id IN (39984,46087,52424)
 
---
+--Jackson, Donte;Reed, DJ
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (43351,45287,52424)
+WHERE nfl_player_id IN (46124,46211)
 
---
+--Hayward, Casey
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 6.7
+WHERE nfl_player_id IN (38592)
+
+--Ward, Denzel;Bradberry, James (cant be green with a 3)
+--(bump if 17+) Sneed, L'Jarius;Fulton, Kristian;Hall, Bryce;Campbell, Tyson;Douglas, Rasul;Apple, Eli;Hobbs, Nate
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (44830,53596)
+WHERE nfl_player_id IN (46073,43351,52546,52469,52566,53462,44911,43299,53596)
 
---
+--(14 for a 63) Gilmore, Stephon;Mullen, Trayvon;Harris, Chris
+--(bump if 16) Facyson, Brandon;Thomas, Tavierre;Edwards, Mike;Jackson, Dane
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (46456,47888,37078,45571,42816,46672,53529)
+WHERE nfl_player_id IN (38540,47823,37724,46729,46672,47882,52647)
 
---
+--(drop if below 9) Waynes, Trae;Smith, Jimmy;Brown, Tre;Roby, Bradley
+-- (bump if 13) Breeland, Bashaud;Guidry, Javelin;Maulet, Arthur;Hamilton, Antonio;Johnson, Dontae
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (47822,53566)
+WHERE nfl_player_id IN (42354,37100,53566,41257,41331,53051,45395,43986,41358)
+
+--(drop if below 9) Westry, Chris;Roberts, Darryl;Carrie, TJ;Coleman, Justin;Robinson, Aaron;Burgess, Terrell;Johnson, Danny
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.8
+WHERE nfl_player_id IN (48565,42590,41448,42827,53500,52512,46329)
+
 
 
 /*-------------
 DS
 --------------*/
 
---
+--Bates, Jessie
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 7.0
-WHERE nfl_player_id IN (42485,46086)
+WHERE nfl_player_id IN (46123)
 
---
+--Winfield, Antoine
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.9
-WHERE nfl_player_id IN (44854)
+WHERE nfl_player_id IN (52453)
 
 --
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.7
-WHERE nfl_player_id IN (40017)
+WHERE nfl_player_id IN (0)
 
---
+--(bump if 23) Holland, Jevon;Fuller, Jordan;Thompson, Jalen;Walker, Tracy;Adderley, Nasir
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.3
-WHERE nfl_player_id IN (52607,52444,53465)
+WHERE nfl_player_id IN (53465,52607,49410,46151,47843)
 
---
+--(drop if below 20) Adams, Jamal;Maye, Marcus;Elliott, Deshon;Jenkins, Malcolm;Ryan, Logan;Blackmon, Julian;Diggs, Quandre;Willis, Khari;Abram, Johnathan
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.1
-WHERE nfl_player_id IN (46259,38868,42488)
+WHERE nfl_player_id IN (44818,44851,46259,34465,40031,52493,42543,38868,47892,47810)
 
---
+--(drop if less than 18) Collins, Landon;Peppers, Jabrill;McCourty, Jason
+--Neal, Ryan;Leavitt, Dallin (bump if 17)
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 5.9
-WHERE nfl_player_id IN (43407,42901)
+WHERE nfl_player_id IN (42376,44837,34654,46711,46908)
 
+--Wilson, Tavon;Sherwood, Jamien;Neasman, Sharrod
+UPDATE #temp_pro_model_grades
+SET pro_model_grade = 5.9
+WHERE nfl_player_id IN (38578,38578,43712)
 
 
 --6.0 updates for rookie 5.9s who have a 7
 UPDATE #temp_pro_model_grades
 SET pro_model_grade = 6.0
-WHERE nfl_player_id IN (53609,53500,53506,53553,53522,53527,53645,53521)
-
+WHERE nfl_player_id IN (53494,53469,53440,53579,53506,53520,53640,53634,53556,53561,53490,53445,53521,53599)
 
 
 
