@@ -3,6 +3,17 @@
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+v1 is just a work file with lots of info, you can dump it
+v2 is when you start adding structure to the tables
+v3 is when you start adding in report_id and evaluation_id dynamically
+v4 is the almost finalized version where dunamic ids are done at the end, and added into Analytics tables
+v5 is just a slight tweak on v4, where you are manually inserting grades and summaries because those auto tables aren't ready yet. Can loook back at v4 once those are done.
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 (1)
 
 
@@ -17,11 +28,11 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	-- Check if #temp_season_positions_all exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions_all') IS NOT NULL
-	DROP TABLE #temp_season_positions_all
+	-- Check if #temp_season_positions exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
+	DROP TABLE #temp_season_positions
 
-	CREATE TABLE #temp_season_positions_all (
+	CREATE TABLE #temp_season_positions (
 		bane_player_id INT
 		,nfl_player_id INT
 		,season INT
@@ -55,7 +66,7 @@ OUTPUT TABLES:
 	)
 
 
-	INSERT INTO #temp_season_positions_all
+	INSERT INTO #temp_season_positions
 	SELECT pl.id AS bane_player_id
 		,nfl_player_id
 		,season
@@ -103,7 +114,7 @@ OUTPUT TABLES:
 		AND snap_count_all >= 0
 
 
-	INSERT INTO #temp_season_positions_all
+	INSERT INTO #temp_season_positions
 	SELECT pl.id AS bane_player_id
 		,nfl_player_id
 		,season
@@ -150,18 +161,6 @@ OUTPUT TABLES:
 		AND snap_count_all >= 0
 
 
-	-- Check if #temp_season_positions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
-	DROP TABLE #temp_season_positions
-
-	SELECT *
-	INTO #temp_season_positions
-	FROM #temp_season_positions_all
-	WHERE bane_player_id = 7037
-		AND season = 2019
-		AND season_type_adjusted = 'REGPOST'
-
-
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 (2)(a)
@@ -189,7 +188,7 @@ OUTPUT TABLES:
 	)
 
 
-	INSERT INTO #temp_analytics_evaluations 	
+	INSERT INTO #temp_analytics_evaluations
 	SELECT bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
@@ -197,9 +196,9 @@ OUTPUT TABLES:
 		,gr.id AS grade_id
 		,CONCAT(ex.explanation_start
 			,' '
-			,CAST(ROUND(statistic_value*multiply_by,1) AS NVARCHAR(10))
+			,CASE WHEN LEFT(RIGHT(CAST(ROUND(ABS(statistic_value)*multiply_by,1) AS NVARCHAR(10)),2),1) <> '.' THEN CONCAT(CAST(ROUND(ABS(statistic_value)*multiply_by,1) AS NVARCHAR(10)),'.0') ELSE CAST(ROUND(ABS(statistic_value)*multiply_by,1) AS NVARCHAR(10)) END
 			,CASE WHEN LEFT(explanation_end,1) = '%' THEN '' ELSE ' ' END
-			,explanation_end
+			,CASE WHEN statistic_value < 0 THEN REPLACE(explanation_end,'more','less') ELSE explanation_end END --hard to change this in the map table because sometimes '%' goes before 'more', sometimes it doesn't
 			,' ('
 			,CONCAT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
 		) AS explanation
@@ -258,7 +257,7 @@ OUTPUT TABLES:
 		ON en.endurance_grade = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
-	
+
 
 	INSERT INTO #temp_analytics_evaluations 	
 	SELECT bane_player_id
@@ -307,7 +306,7 @@ OUTPUT TABLES:
 		,po.season
 		,position_group_blt
 		,p40.[value] AS projected_forty
-		,RANK() OVER (PARTITION BY po.season, position_group_blt ORDER BY p40.[value]) AS projected_forty_rank
+		,RANK() OVER (PARTITION BY po.season, position_group_blt ORDER BY p40.[value] DESC) AS projected_forty_rank
 	INTO #temp_projected_forties
 	FROM #temp_season_positions po
 	INNER JOIN (SELECT *, RANK() OVER (PARTITION BY player_id ORDER BY season DESC, rep_category DESC) AS forty_rank FROM [BaneProductionAnalytics].dbo.projected_forty_times) AS p40
@@ -359,30 +358,7 @@ OUTPUT TABLES:
 
 (2)(d)
 
-Insert final summary rows into the evaluations table.
-
-OUTPUT TABLES:
-#temp_analytics_evaluations
-
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	INSERT INTO #temp_analytics_evaluations
-	SELECT bane_player_id
-		,rp.season
-		,rp.season_type_adjusted
-		,1379 AS skill_id
-		,NULL AS grade_id
-		,'' AS explanation
-	FROM #temp_season_positions rp
-
-
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-(2)(e)
-
-Manually add the final summaries text by updating the final summary rows.
-
-Also manually insert final summary updates or revised final summarries here. You don't automatically add those in because not all reports have them.
+Manually insert the final summaries into the evaluations table.
 
 As of 06/14/2020 skill ids:
 1379 - final summary
@@ -394,21 +370,27 @@ OUTPUT TABLES:
 #temp_analytics_evaluations
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-UPDATE #temp_analytics_evaluations
-SET explanation = 'Vinny is a potential low cost signing with some pass rush upside.  in 2019, he was a 6 pass rusher by both stats and NGS and was a 6 tackler to go along with it.  He isn''t a consistently good tackler - he was only a 4 in 2018.'
-WHERE skill_id = 1379
-	AND season = 2019
-	AND season_type_adjusted = 'REGPOST'
-	AND bane_player_id = 7037
+	
+	INSERT INTO #temp_analytics_evaluations VALUES
+	--([bane_player_id],[season],[season_type_adjusted],[skill_id],[grade_id],[explanation])
+	(7037,2019,'REGPOST',1379,NULL,'Vinny is a potential low cost signing with some pass rush upside.  In 2019, he was a very good pass rusher by both stats and NGS and was a very good tackler to go along with it.  He is typically inconsistent in both tackling and run defense, sometimes showing very good performance but not holding it through year to year.')
+	,(61386,2019,'REGPOST',1379,NULL,'Joey is the top DE in the league.  He is consistently at the top of the league in pressure rate, and in 3 of the last 4 years was also one of the most active DEs in the league in terms of making extra tackles.  While not a consistent top tier run defender, he has never been worst than inconsistent, and was oustanding in 2019.')
+	,(3957,2019,'REGPOST',1379,NULL,'Byron is a solid but not spectacular starter who seems to be improving his coverage skills.  After three years of inconsistent coverage, he was very good in 2018 and oustanding in 2019.  Byron is inconsistent at both playing the ball and tackling. He is one of the fastest DBs in the league. While the improving coverage skills are promising, he does not look to be worth a top tier contract.')
+	,(64417,2019,'REGPOST',1379,NULL,'Maliek is a potential low cost signing with interior pass rush upside.  He was a very good pass rusher in 2019, but had been inconsistent or worse in his previous seasons.  He is a poor tackler and a poor run defender.')
+	,(203146,2019,'REGPOST',1379,NULL,'Matt is a solid but not spectacular starter who flashes playmaking ability.  He has been a very good or outstanding pass rusher the last two seasons, but it is important to note he leads the NFL in unblocked pressures the last two seasons.  This could indicate schemed up pressure moreso than personally generated pressure.  Matt is an inconsistent tackler and run defender.  He is an outstanding playmaker.')
+	,(2698,2019,'REGPOST',1379,NULL,'Ha Ha is a capable safety who should provide good value for a low cost.  He has a history of outstanding or very good coverage.  He has been an inconsistent tackler most of his career, but has shown ability to be better a few seasons.  In 2019 he showed inconsistent ball skills, but had historically been very good in that area.')
+	,(58798,2019,'REGPOST',1379,NULL,'Derrick is a capabale starting running back.  Our statistics do not like Derrick as much as traditional measures do.  He was inconsistent at avoiding tackles and poor as both as pass catcher and pass protector.  It looks like a lot of his raw rushing totals came as a result of a good offensive line.  He does have very good endurance.')
+	,(4376,2019,'REGPOST',1379,NULL,'Nick is a solid starter. He is an outstanding run blocker year in and year out.  He is inconsistent as a receiver and after the catch.')
 
 /*
-
-INSERT INTO #temp_analytics_evaluations VALUES
-([bane_player_id],[season],[season_type_adjusted],[skill_id],[grade_id],[explanation])
-
+	select ev.*,gr.[value]
+	from #temp_analytics_evaluations ev
+	inner join BaneProductionAnalytics.dbo.grades gr
+	on ev.grade_id = gr.id
+	where bane_player_id = 	4376
+	and season_type_adjusted = 'regpost'
+	order by skill_id,season
 */
-
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -422,22 +404,30 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	-- Check if #temp_analytics_grades exists, if it does drop it
+	-- Check if #temp_analytics_grades, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_analytics_grades') IS NOT NULL
 	DROP TABLE #temp_analytics_grades
 
-	SELECT bane_player_id
-		,season
-		,season_type_adjusted
-		,NULL AS grade_id
-	INTO #temp_analytics_grades
-	FROM #temp_season_positions
+	CREATE TABLE #temp_analytics_grades (
+		bane_player_id INT
+		,season INT
+		,season_type_adjusted NVARCHAR(7)
+		,author_id INT
+		,grade_id INT
+	)
 
-	UPDATE #temp_analytics_grades
-	SET grade_id = 47
-	WHERE season = 2019
-		AND season_type_adjusted = 'REGPOST'
-		AND bane_player_id = 7037
+
+	INSERT INTO #temp_analytics_grades VALUES
+	--([bane_player_id],[season],[season_type_adjusted],[author_id],[grade_id])
+	(7037,2019,'REGPOST',70,48)
+	,(61386,2019,'REGPOST',70,40)
+	,(3957,2019,'REGPOST',70,46)
+	,(64417,2019,'REGPOST',70,48)
+	,(203146,2019,'REGPOST',70,45)
+	,(2698,2019,'REGPOST',70,46)
+	,(58798,2019,'REGPOST',70,46)
+	,(35702,2019,'REGPOST',70,43)
+	,(35702,2019,'REGPOST',70,45)
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -464,7 +454,7 @@ Analytics.dbo.analytics_reports
 
 -- Find the next unique report id 
 	DECLARE @next_report_id INT
-	EXEC Analytics.dbo.sp_get_next_surrogate_key 'test_reports', @next_report_id OUTPUT
+	EXEC Analytics.dbo.sp_get_next_surrogate_key 'analytics_reports', @next_report_id OUTPUT
 
 
 	-- Check if #temp_analytics_reports_with_seasons exists, if it does drop it
@@ -472,7 +462,7 @@ Analytics.dbo.analytics_reports
 	DROP TABLE #temp_analytics_reports_with_seasons
 
 	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season, rp.season_type_adjusted) AS id
-		,70 AS author_id
+		,gr.author_id
 		,gr.grade_id
 		,po.id AS position_id
 		,'analytics-pro' AS [type]
@@ -528,7 +518,7 @@ Analytics.dbo.analytics_reports
 -- Update the next id table with all the ones you just wrote in
 	UPDATE [Analytics].[dbo].surrogate_key
 	SET next_key = (SELECT MAX(id) FROM Analytics.dbo.analytics_reports)
-	WHERE table_name = 'test_reports'
+	WHERE table_name = 'analytics_reports'
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -553,7 +543,7 @@ Analytics.dbo.analytics_evaluations
 
 -- Find the next unique report id 
 	DECLARE @next_eval_id INT
-	EXEC Analytics.dbo.sp_get_next_surrogate_key 'test_evals', @next_eval_id OUTPUT
+	EXEC Analytics.dbo.sp_get_next_surrogate_key 'analytics_evaluations', @next_eval_id OUTPUT
 
 
 	--INSERT INTO Analytics.dbo.analytics_evaluations
@@ -577,4 +567,4 @@ Analytics.dbo.analytics_evaluations
 -- Update the next id table with all the ones you just wrote in
 	UPDATE [Analytics].[dbo].surrogate_key
 	SET next_key = (SELECT MAX(id) FROM Analytics.dbo.analytics_evaluations)
-	WHERE table_name = 'test_evals'
+	WHERE table_name = 'analytics_evaluations'
