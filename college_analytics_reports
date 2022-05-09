@@ -9,6 +9,7 @@ v4 fixes overall report position
 v5 takes out quality of comp for 2022 guys
 V6 changes from position most played to model position
 v7 changes to the position based feature mapping table
+v8 does feature percentages the new way and adds derrick new evals
 
 
 ****make the report position the one he goes in the model as, use alignment for what he plays.
@@ -357,7 +358,7 @@ OUTPUT TABLES:
 		,feature_group
 		,feature_explanation
 		,sort_multiplier
-		,RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN ((fc.[value] IS NULL AND fc.feature_category = 'components') OR fc.[value] = 0 OR fc.feature LIKE 'conference%' OR mc.measurable_value IS NULL) THEN -999999 ELSE ABS(feature_contributions) END DESC) AS feature_rank
+		,RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN ((fc.[value] IS NULL AND fc.feature_category = 'components') OR fc.[value] = 0 OR fc.feature LIKE 'conference%' OR (fc.feature_category = 'measurables' AND fc.feature IN ('forty_dash','twenty_split','ten_split','flying_twenty','flying_ten','short_shuttle','three_cone','swim_right','rip_left','left_turn','right_turn','broad_jump','vertical_jump') AND mc.measurable_value IS NULL)) THEN -999999 + ABS(feature_contributions) ELSE ABS(feature_contributions) END DESC) AS feature_rank
 		,RANK() OVER (PARTITION BY fc.bane_player_id, feature_group ORDER BY ABS(feature_contributions) DESC) AS feature_group_rank
 		,is_excluded
 	INTO #temp_feature_contributions
@@ -398,6 +399,49 @@ OUTPUT TABLES:
 		,position_model_group
 
 
+	-- Check if #temp_final_contributions exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_final_contributions') IS NOT NULL
+	DROP TABLE #temp_final_contributions
+
+	SELECT bane_player_id
+		,draft_model_year
+		,draft_model_version
+		,feature
+		,CASE WHEN feature  = 'production_score' THEN 'production'
+			WHEN feature = 'measurables_score' THEN 'measurables'
+			WHEN feature = 'components' THEN 'components'
+			ELSE feature 
+		END AS feature_group
+		,ABS(feature_contributions) / NULLIF(SUM(ABS(feature_contributions)) OVER (PARTITION BY bane_player_id),0) AS final_contribution_percentage
+	INTO #temp_final_contributions
+	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions
+	WHERE draft_model_year = 2022
+		AND draft_model_version = 'post_combine'
+		AND feature_category = 'final'
+
+
+	-- Check if #temp_feature_contribution_percentages exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_feature_contribution_percentages') IS NOT NULL
+	DROP TABLE #temp_feature_contribution_percentages
+
+	SELECT fc.bane_player_id
+		,fc.draft_model_year
+		,fc.draft_model_version
+		,fc.feature
+		,fc.feature_category
+		,ABS(fc.feature_contributions) / NULLIF(SUM(ABS(fc.feature_contributions)) OVER (PARTITION BY fc.bane_player_id, fc.feature_category),0) * ff.final_contribution_percentage AS feature_percentage
+	INTO #temp_feature_contribution_percentages
+	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions fc
+	LEFT JOIN #temp_final_contributions ff
+		ON fc.bane_player_id = ff.bane_player_id
+		AND fc.draft_model_year = ff.draft_model_year
+		AND fc.draft_model_version = ff.draft_model_version
+		AND fc.feature_category = ff.feature_group
+	WHERE fc.draft_model_year = 2022
+		AND fc.draft_model_version = 'post_combine'
+		AND fc.feature_category <> 'final'
+
+
 	-- Check if #temp_feature_contribution_grades exists, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_feature_contribution_grades') IS NOT NULL
 	DROP TABLE #temp_feature_contribution_grades
@@ -407,7 +451,7 @@ OUTPUT TABLES:
 			WHEN fc.feature_category = 'production' AND fc.feature LIKE 'conference%' THEN 999999
 			ELSE RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN fc.feature_group_rank > 1 THEN 9999999 ELSE feature_rank END)
 		END AS feature_display_rank
-		,ABS(feature_contributions) / NULLIF((SELECT SUM(ABS(feature_contributions)) FROM #temp_feature_contributions fc2 WHERE fc.bane_player_id = fc2.bane_player_id),0) AS feature_percentage
+		,fp.feature_percentage
 		,CASE WHEN cc.feature_count < 10 THEN NULL ELSE
 			(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * sort_multiplier DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
 						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * sort_multiplier DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
@@ -422,6 +466,12 @@ OUTPUT TABLES:
 		ON fc.feature_category = cc.feature_category
 		AND fc.feature = cc.feature
 		AND fc.position_model_group = cc.position_model_group
+	LEFT JOIN #temp_feature_contribution_percentages fp
+		ON fc.bane_player_id = fp.bane_player_id
+		AND fc.draft_model_year = fp.draft_model_year
+		AND fc.draft_model_version = fp.draft_model_version
+		AND fc.feature_category = fp.feature_category
+		AND fc.feature = fp.feature
 	WHERE is_excluded = 0 --need to do this here because you want them included in the feature percentage calculation
 		AND NOT (fc.feature_category = 'production' AND [value] IS NULL) --need to do this here because you want them included in the feature percentage calculation
 
@@ -466,7 +516,7 @@ OUTPUT TABLES:
 /*
 	select *
 	from #temp_feature_contribution_grades
-	where bane_player_id IN  (310564)
+	where bane_player_id IN  (285599)
 	--AND feature_display_rank <= 3
 	ORDER BY feature_category, feature_display_rank
 */
@@ -565,6 +615,95 @@ OUTPUT TABLES:
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+(4a)
+
+Insert performance and body composition grades.
+
+As of 06/14/2020 skill ids:
+1586 - endurance (A-END)
+1610 - play speed (A-PLYSPD)
+1637 - body fat (A-BODFAT)
+1638 - lean mass (A-LMASS)
+
+OUTPUT TABLES:
+#temp_analytics_evaluations
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+----Endurance	
+	INSERT INTO #temp_analytics_evaluations
+	SELECT ac.bane_player_id
+		,1586 AS skill_id
+		,'A-END' AS skill_code
+		,gr.id AS grade_id
+		,ac.[description] AS explanation
+	FROM AnalyticsSandbox.dbo.bane_college_analytics_reports_additional_components ac
+	INNER JOIN BaneProductionAnalytics.dbo.grades gr
+		ON ac.grade = gr.[value]
+		AND gr.scale_id = 5
+		AND gr.active = 1
+	INNER JOIN #temp_model_grades mg
+		ON ac.bane_player_id = mg.bane_player_id
+		AND mg.draft_year >= 2022
+	WHERE ac.grade_type = 'endurance'
+
+
+----Play Speed
+	INSERT INTO #temp_analytics_evaluations
+	SELECT ac.bane_player_id
+		,1610 AS skill_id
+		,'A-PLYSPD' AS skill_code
+		,gr.id AS grade_id
+		,ac.[description] AS explanation
+	FROM AnalyticsSandbox.dbo.bane_college_analytics_reports_additional_components ac
+	INNER JOIN BaneProductionAnalytics.dbo.grades gr
+		ON ac.grade = gr.[value]
+		AND gr.scale_id = 5
+		AND gr.active = 1
+	INNER JOIN #temp_model_grades mg
+		ON ac.bane_player_id = mg.bane_player_id
+		AND mg.draft_year >= 2022
+	WHERE ac.grade_type = 'play speed'
+
+
+----Body Fat
+	INSERT INTO #temp_analytics_evaluations
+	SELECT ac.bane_player_id
+		,1637 AS skill_id
+		,'A-BODFAT' AS skill_code
+		,gr.id AS grade_id
+		,ac.[description] AS explanation
+	FROM AnalyticsSandbox.dbo.bane_college_analytics_reports_additional_components ac
+	INNER JOIN BaneProductionAnalytics.dbo.grades gr
+		ON ac.grade = gr.[value]
+		AND gr.scale_id = 5
+		AND gr.active = 1
+	INNER JOIN #temp_model_grades mg
+		ON ac.bane_player_id = mg.bane_player_id
+		AND mg.draft_year >= 2022
+	WHERE ac.grade_type = 'body fat'
+
+
+----Lean Mass
+	INSERT INTO #temp_analytics_evaluations
+	SELECT ac.bane_player_id
+		,1638 AS skill_id
+		,'A-LMASS' AS skill_code
+		,gr.id AS grade_id
+		,ac.[description] AS explanation
+	FROM AnalyticsSandbox.dbo.bane_college_analytics_reports_additional_components ac
+	INNER JOIN BaneProductionAnalytics.dbo.grades gr
+		ON ac.grade = gr.[value]
+		AND gr.scale_id = 5
+		AND gr.active = 1
+	INNER JOIN #temp_model_grades mg
+		ON ac.bane_player_id = mg.bane_player_id
+		AND mg.draft_year >= 2022
+	WHERE ac.grade_type = 'lean mass'
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 (5)
 
 
@@ -622,8 +761,8 @@ Analytics.dbo.analytics_reports
 	DROP TABLE #temp_analytics_reports_with_seasons
 
 	SELECT re.id
-		,gr.author_id
-		,gr.grade_id
+		,rp.author_id
+		,rp.grade_id
 		,rp.model_position_id AS position_id
 		--,po.id AS position_id
 		,'analytics-college' AS [type]
@@ -631,10 +770,10 @@ Analytics.dbo.analytics_reports
 		,re.created_at
 		,GETDATE() AS updated_at
 		,rp.bane_player_id AS player_id
-		,rp.alignment
+		,po.alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
-		,'2022 Pre Combine' AS [exposure]
+		,'2022 Post Combine' AS [exposure]
 		,NULL AS [import_key]
 		,NULL AS [revised_overall_grade_id]
 		,'' AS [legacy_grade]
@@ -643,13 +782,11 @@ Analytics.dbo.analytics_reports
 		,NULL AS [all_star_game_id]
 	INTO #temp_analytics_reports_with_seasons
 	FROM Analytics.dbo.analytics_reports re
-	INNER JOIN #temp_report_positions rp
+	INNER JOIN #temp_model_grades rp
 		ON re.player_id = rp.bane_player_id
-		AND rp.season = 2022
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON rp.position_blt = po.code
-	INNER JOIN #temp_model_grades gr
-		ON rp.bane_player_id = gr.bane_player_id
+		--AND rp.season = 2022
+	LEFT JOIN #temp_report_positions po
+		ON rp.bane_player_id = po.bane_player_id
 	WHERE re.exposure = '2022 Pre Combine'
 
 --
@@ -665,9 +802,9 @@ Analytics.dbo.analytics_reports
 	EXEC Analytics.dbo.sp_get_next_surrogate_key 'analytics_reports', @next_report_id OUTPUT
 
 	INSERT INTO #temp_analytics_reports_with_seasons
-	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season) AS id
-		,gr.author_id
-		,gr.grade_id
+	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id) AS id
+		,rp.author_id
+		,rp.grade_id
 		,rp.model_position_id AS position_id
 		--,po.id AS position_id
 		,'analytics-college' AS [type]
@@ -675,23 +812,21 @@ Analytics.dbo.analytics_reports
 		,GETDATE() AS created_at
 		,GETDATE() AS updated_at
 		,rp.bane_player_id AS player_id
-		,alignment
+		,po.alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
-		,'2022 Pre Combine' AS [exposure]
+		,'2022 Post Combine' AS [exposure]
 		,NULL AS [import_key]
 		,NULL AS [revised_overall_grade_id]
 		,'' AS [legacy_grade]
 		,NULL AS [stratbridge_season_id]
 		,0 AS [incomplete]
 		,NULL AS [all_star_game_id]
-	FROM #temp_report_positions rp
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON rp.position_blt = po.code
-	INNER JOIN #temp_model_grades gr
-		ON rp.bane_player_id = gr.bane_player_id
+	FROM #temp_model_grades rp
+	LEFT JOIN #temp_report_positions po
+		ON rp.bane_player_id = po.bane_player_id
 	WHERE rp.draft_year = 2022
-	--WHERE rp.bane_player_id NOT IN (SELECT player_id FROM #temp_analytics_reports_with_seasons)
+		AND rp.bane_player_id NOT IN (SELECT player_id FROM #temp_analytics_reports_with_seasons)
 
 
 	DELETE FROM Analytics.dbo.analytics_reports WHERE id IN (SELECT id FROM #temp_analytics_reports_with_seasons)
@@ -762,7 +897,7 @@ Analytics.dbo.analytics_evaluations
 	FROM Analytics.dbo.analytics_evaluations ae
 	INNER JOIN Analytics.dbo.analytics_reports re
 		ON ae.report_id = re.id
-		AND re.exposure = '2022 Pre Combine'
+		AND re.exposure = '2022 Post Combine'
 	LEFT JOIN #temp_analytics_evaluations ev
 		ON re.player_id = ev.bane_player_id
 		AND ae.skill_id = ev.skill_id
@@ -796,11 +931,11 @@ Analytics.dbo.analytics_evaluations
 	FROM Analytics.dbo.analytics_reports re
 	INNER JOIN #temp_analytics_evaluations ev
 		ON re.player_id = ev.bane_player_id
-	WHERE re.exposure = '2022 Pre Combine'
+	WHERE re.exposure = '2022 Post Combine'
 		AND CONCAT(re.id,'_',ev.skill_id) NOT IN (SELECT CONCAT(report_id,'_',skill_id) FROM #temp_analytics_evaluations_with_seasons)
 
 
-	DELETE FROM Analytics.dbo.analytics_evaluations WHERE report_id IN (SELECT id FROM Analytics.dbo.analytics_reports WHERE exposure = '2022 Pre Combine')
+	DELETE FROM Analytics.dbo.analytics_evaluations WHERE report_id IN (SELECT id FROM Analytics.dbo.analytics_reports WHERE exposure = '2022 Post Combine')
 	INSERT INTO Analytics.dbo.analytics_evaluations
 	SELECT id
 		,skill_id
