@@ -10,162 +10,20 @@ v4 is the almost finalized version where dunamic ids are done at the end, and ad
 v5 is just a slight tweak on v4, where you are manually inserting grades and summaries because those auto tables aren't ready yet. Can loook back at v4 once those are done.
 v6 adds burst.
 v7 adds sorting position alignment by snap count high to low.
-v8 updates the new skill ids
+V8 updates the new skill ids
+v9 orders positions from most to least played
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(1)(a)
+(1)
 
 
 Create a table with all the positions a player played in a season. You need the overall position along with all the percentages (for the alignment field).
 
 Defense and offense positions are kept in different tables, so do defense then append offense to it.
-
-
-OUTPUT TABLES:
-#temp_season_positions_all
-
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-	-- Check if #temp_season_positions_all exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions_all') IS NOT NULL
-	DROP TABLE #temp_season_positions_all
-
-	CREATE TABLE #temp_season_positions_all (
-		bane_player_id INT
-		,nfl_player_id INT
-		,season INT
-		,season_type_adjusted NVARCHAR(7)
-		,position_blt NVARCHAR(10)
-		,position_group_blt NVARCHAR(10)
-		,display_nt NVARCHAR(20)
-		,display_dt3t NVARCHAR(20)
-		,display_de5t NVARCHAR(20)
-		,display_de43 NVARCHAR(20)
-		,display_rush NVARCHAR(20)
-		,display_sam  NVARCHAR(20)
-		,display_ob34 NVARCHAR(20)
-		,display_mike NVARCHAR(20)
-		,display_will NVARCHAR(20)
-		,display_ib NVARCHAR(20)
-		,display_cb NVARCHAR(20)
-		,display_nb NVARCHAR(20)
-		,display_ds NVARCHAR(20)
-		,display_qb NVARCHAR(20)
-		,display_rb NVARCHAR(20)
-		,display_fb NVARCHAR(20)
-		,display_wr NVARCHAR(20)
-		,display_te NVARCHAR(20)
-		,display_slot NVARCHAR(20)
-		,display_lot NVARCHAR(20)
-		,display_log NVARCHAR(20)
-		,display_oc NVARCHAR(20)
-		,display_rog NVARCHAR(20)
-		,display_rot NVARCHAR(20)
-	)
-
-
-	INSERT INTO #temp_season_positions_all
-	SELECT pl.id AS bane_player_id
-		,nfl_player_id
-		,season
-		,season_type_adjusted
-		,position_blt
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			ELSE position_blt
-		END AS position_group_blt
-		,CASE WHEN CAST(snap_count_nt AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', NT (',CAST(ROUND(CAST(snap_count_nt AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_nt
-		,CASE WHEN CAST(snap_count_dt3t AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', DT3T (',CAST(ROUND(CAST(snap_count_dt3t AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_dt3t
-		,CASE WHEN CAST(snap_count_de5t AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', DE5T (',CAST(ROUND(CAST(snap_count_de5t AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_de5t
-		,CASE WHEN CAST(snap_count_de43 AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', DE43 (',CAST(ROUND(CAST(snap_count_de43 AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_de43
-		,CASE WHEN CAST(snap_count_rush AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', RUSH (',CAST(ROUND(CAST(snap_count_rush AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_rush
-		,CASE WHEN CAST(snap_count_sam AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', SAM (',CAST(ROUND(CAST(snap_count_sam AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_sam
-		,CASE WHEN CAST(snap_count_ob34 AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', OB34 (',CAST(ROUND(CAST(snap_count_ob34 AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_ob34
-		,CASE WHEN CAST(snap_count_mike AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', MIKE (',CAST(ROUND(CAST(snap_count_mike AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_mike
-		,CASE WHEN CAST(snap_count_will AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', WILL (',CAST(ROUND(CAST(snap_count_will AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_will
-		,CASE WHEN CAST(snap_count_ib AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', IB (',CAST(ROUND(CAST(snap_count_ib AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_ib
-		,CASE WHEN CAST(snap_count_cb AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', CB (',CAST(ROUND(CAST(snap_count_cb AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_cb
-		,CASE WHEN CAST(snap_count_nb AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', NB (',CAST(ROUND(CAST(snap_count_nb AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_nb
-		,CASE WHEN CAST(snap_count_ds AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', DS (',CAST(ROUND(CAST(snap_count_ds AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_ds
-		,'' AS display_qb
-		,'' AS display_rb
-		,'' AS display_fb
-		,'' AS display_wr
-		,'' AS display_te
-		,'' AS display_slot
-		,'' AS display_lot
-		,'' AS display_log
-		,'' AS display_oc
-		,'' AS display_rog
-		,'' AS display_rot
-	FROM Analytics.dbo.analysis_players_season_position_defense de
-	INNER JOIN BaneProductionAnalytics.dbo.players pl
-		ON de.nfl_player_id = pl.nfl_id
-		AND pl.is_deleted = 0
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON pl.position_id = po.id
-	WHERE po.[team] = 'defense'
-		AND defense_type = 'ALL'
-		AND snap_count_all >= 0
-
-
-	INSERT INTO #temp_season_positions_all
-	SELECT pl.id AS bane_player_id
-		,nfl_player_id
-		,season
-		,season_type_adjusted
-		,position_blt
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			ELSE position_blt
-		END AS position_group_blt
-		,'' AS display_nt
-		,'' AS display_dt3t
-		,'' AS display_de5t
-		,'' AS display_de43
-		,'' AS display_rush
-		,'' AS display_sam
-		,'' AS display_ob34
-		,'' AS display_mike
-		,'' AS display_will
-		,'' AS display_ib
-		,'' AS display_cb
-		,'' AS display_nb
-		,'' AS display_ds
-		,CASE WHEN CAST(snap_count_qb AS FLOAT)  / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', QB (',CAST(ROUND(CAST(snap_count_qb AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_qb
-		,CASE WHEN CAST(snap_count_rb AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', RB (',CAST(ROUND(CAST(snap_count_rb AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_rb
-		,CASE WHEN CAST(snap_count_fb AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', FB (',CAST(ROUND(CAST(snap_count_fb AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_fb
-		,CASE WHEN CAST(snap_count_wr AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', WR (',CAST(ROUND(CAST(snap_count_wr AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_wr
-		,CASE WHEN CAST(snap_count_te AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', TE (',CAST(ROUND(CAST(snap_count_te AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_te
-		,CASE WHEN CAST(snap_count_slot AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', SLOT (',CAST(ROUND(CAST(snap_count_slot AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_slot
-		,CASE WHEN CAST(snap_count_lot AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', LT (',CAST(ROUND(CAST(snap_count_lot AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_lot
-		,CASE WHEN CAST(snap_count_log AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', LG (',CAST(ROUND(CAST(snap_count_log AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_log
-		,CASE WHEN CAST(snap_count_oc AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', OC (',CAST(ROUND(CAST(snap_count_oc AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_oc
-		,CASE WHEN CAST(snap_count_rog AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', RG (',CAST(ROUND(CAST(snap_count_rog AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_rog
-		,CASE WHEN CAST(snap_count_rot AS FLOAT) / NULLIF(snap_count_all,0) >= 0.05 THEN CONCAT(', RT (',CAST(ROUND(CAST(snap_count_rot AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_rot
-	FROM Analytics.dbo.analysis_players_season_position_offense de
-	INNER JOIN BaneProductionAnalytics.dbo.players pl
-		ON de.nfl_player_id = pl.nfl_id
-		AND pl.is_deleted = 0
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON pl.position_id = po.id
-	WHERE po.[team] = 'offense'
-		AND snap_count_all >= 0
-
-
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-(1)(b)
 
 Order the positions played from most to least so they look good in the alignment variable.
 
@@ -177,15 +35,201 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	-- Check if #temp_season_positions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
+	-- Check if #temp_season_positions_all exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions_all') IS NOT NULL
+	DROP TABLE #temp_season_positions_all
+
+	SELECT pl.id AS bane_player_id
+		,nfl_player_id
+		,season
+		,season_type_adjusted
+		,position_blt
+		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
+			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
+			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
+			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
+			ELSE position_blt
+		END AS position_group_blt
+		,snap_count_all
+		,snap_count_nt
+		,snap_count_dt3t
+		,snap_count_de5t
+		,snap_count_de43
+		,snap_count_rush
+		,snap_count_sam
+		,snap_count_ob34
+		,snap_count_mike
+		,snap_count_will
+		,snap_count_ib
+		,snap_count_cb
+		,snap_count_nb
+		,snap_count_ds
+		,NULL AS snap_count_qb
+		,NULL AS snap_count_rb
+		,NULL AS snap_count_fb
+		,NULL AS snap_count_wr
+		,NULL AS snap_count_te
+		,NULL AS snap_count_slot
+		,NULL AS snap_count_lot
+		,NULL AS snap_count_log
+		,NULL AS snap_count_oc
+		,NULL AS snap_count_rog
+		,NULL AS snap_count_rot
+	INTO #temp_season_positions_all
+	FROM Analytics.dbo.analysis_players_season_position_defense de
+	INNER JOIN BaneProductionAnalytics.dbo.players pl
+		ON de.nfl_player_id = pl.nfl_id
+		AND pl.is_deleted = 0
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON pl.position_id = po.id
+	WHERE po.[team] = 'defense'
+		AND defense_type = 'ALL'
+		AND snap_count_all > 0
+
+
+	INSERT INTO #temp_season_positions_all
+	SELECT pl.id AS bane_player_id
+		,nfl_player_id
+		,season
+		,season_type_adjusted
+		,position_blt
+		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
+			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
+			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
+			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
+			ELSE position_blt
+		END AS position_group_blt
+		,snap_count_all
+		,NULL AS snap_count_nt
+		,NULL AS snap_count_dt3t
+		,NULL AS snap_count_de5t
+		,NULL AS snap_count_de43
+		,NULL AS snap_count_rush
+		,NULL AS snap_count_sam
+		,NULL AS snap_count_ob34
+		,NULL AS snap_count_mike
+		,NULL AS snap_count_will
+		,NULL AS snap_count_ib
+		,NULL AS snap_count_cb
+		,NULL AS snap_count_nb
+		,NULL AS snap_count_ds
+		,snap_count_qb
+		,snap_count_rb
+		,snap_count_fb
+		,snap_count_wr
+		,snap_count_te
+		,snap_count_slot
+		,snap_count_lot
+		,snap_count_log
+		,snap_count_oc
+		,snap_count_rog
+		,snap_count_rot
+	FROM Analytics.dbo.analysis_players_season_position_offense de
+	INNER JOIN BaneProductionAnalytics.dbo.players pl
+		ON de.nfl_player_id = pl.nfl_id
+		AND pl.is_deleted = 0
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON pl.position_id = po.id
+	WHERE po.[team] = 'offense'
+		AND snap_count_all > 0
+
+
+-- Check if #temp_season_positions_unpivot exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions_unpivot') IS NOT NULL
+		DROP TABLE #temp_season_positions_unpivot
+
+	SELECT bane_player_id
+		,season
+		,season_type_adjusted
+		,CAST(UPPER(REPLACE(position_name,'snap_count_','')) AS NVARCHAR(4)) AS position_snaps
+		,value AS snap_count
+		,RANK() OVER (PARTITION BY bane_player_id, season, season_type_adjusted ORDER BY value DESC) AS position_rank
+	INTO #temp_season_positions_unpivot
+	FROM #temp_season_positions_all
+	UNPIVOT (value FOR position_name IN (snap_count_nt
+										,snap_count_dt3t
+										,snap_count_de5t
+										,snap_count_de43
+										,snap_count_rush
+										,snap_count_sam
+										,snap_count_ob34
+										,snap_count_mike
+										,snap_count_will
+										,snap_count_ib
+										,snap_count_cb
+										,snap_count_nb
+										,snap_count_ds
+										,snap_count_qb
+										,snap_count_rb
+										,snap_count_fb
+										,snap_count_wr
+										,snap_count_te
+										,snap_count_slot
+										,snap_count_lot
+										,snap_count_log
+										,snap_count_oc
+										,snap_count_rog
+										,snap_count_rot
+							)) AS me
+
+
+-- Check if #temp_season_positions_display exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions_display') IS NOT NULL
+		DROP TABLE #temp_season_positions_display
+
+	SELECT up.*
+		,CONCAT(', ',position_snaps,' (',CAST(ROUND(CAST(snap_count AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') AS position_display
+	INTO #temp_season_positions_display
+	FROM #temp_season_positions_unpivot up
+	INNER JOIN #temp_season_positions_all sp
+		ON up.bane_player_id = sp.bane_player_id
+		AND up.season = sp.season
+		AND up.season_type_adjusted = sp.season_type_adjusted
+	WHERE snap_count > 0
+		AND position_rank <= 5
+		AND (CAST(snap_count AS FLOAT) / NULLIF(snap_count_all,0)) >= 0.05
+
+
+-- Check if #temp_season_positions_pivot exists, if it does drop it
+IF OBJECT_ID('tempdb..#temp_season_positions_pivot') IS NOT NULL
+	DROP TABLE #temp_season_positions_pivot
+
+	SELECT bane_player_id
+		,season
+		,season_type_adjusted
+		,SUBSTRING(CONCAT([1],[2],[3],[4],[5]),3,255) AS alignment
+	INTO #temp_season_positions_pivot
+	FROM (
+	SELECT bane_player_id
+		,season
+		,season_type_adjusted
+		,position_rank
+		,position_display
+	FROM #temp_season_positions_display) up
+	PIVOT(MAX(position_display) FOR position_rank IN ([1],[2],[3],[4],[5])) AS pvt
+	ORDER BY bane_player_id
+
+
+-- Check if #temp_season_positions exists, if it does drop it
+IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
 	DROP TABLE #temp_season_positions
 
-	SELECT *
+	SELECT sp.bane_player_id
+		,sp.nfl_player_id
+		,sp.season
+		,sp.season_type_adjusted
+		,position_blt
+		,position_group_blt
+		,alignment
 	INTO #temp_season_positions
-	FROM #temp_season_positions_all
-
-
+	FROM #temp_season_positions_all sp
+	INNER JOIN #temp_season_positions_pivot pv
+		ON sp.bane_player_id = pv.bane_player_id
+		AND sp.season = pv.season
+		AND sp.season_type_adjusted = pv.season_type_adjusted
+	
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -567,9 +611,9 @@ Analytics.dbo.analytics_reports
 -- Update the next id table to 299999
 -- THIS IS JUST FOR TESTING, WHEN YOU GO LIVE REMOVE THIS
 --
-	UPDATE [Analytics].[dbo].surrogate_key
-	SET next_key = 299999
-	WHERE table_name = 'analytics_reports'
+	--UPDATE [Analytics].[dbo].surrogate_key
+	--SET next_key = 299999
+	--WHERE table_name = 'analytics_reports'
 
 -- Find the next unique report id 
 	DECLARE @next_report_id INT
@@ -589,7 +633,7 @@ Analytics.dbo.analytics_reports
 		,GETDATE() AS created_at
 		,GETDATE() AS updated_at
 		,rp.bane_player_id AS player_id
-		,SUBSTRING(CONCAT(display_nt,display_dt3t,display_de5t,display_de43,display_rush,display_sam,display_ob34,display_mike,display_will,display_ib,display_cb,display_nb,display_ds,display_qb,display_rb,display_fb,display_wr,display_te,display_slot,display_lot,display_log,display_oc,display_rog,display_rot),3,255) AS alignment
+		,alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
 		,'' AS [exposure]
@@ -656,9 +700,9 @@ Analytics.dbo.analytics_evaluations
 -- Update the next id table to 299999
 -- THIS IS JUST FOR TESTING, WHEN YOU GO LIVE REMOVE THIS
 --
-	UPDATE [Analytics].[dbo].surrogate_key
-	SET next_key = 299999
-	WHERE table_name = 'analytics_evaluations'
+	--UPDATE [Analytics].[dbo].surrogate_key
+	--SET next_key = 299999
+	--WHERE table_name = 'analytics_evaluations'
 
 -- Find the next unique report id 
 	DECLARE @next_eval_id INT
