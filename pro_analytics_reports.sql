@@ -9,31 +9,31 @@ v3 is when you start adding in report_id and evaluation_id dynamically
 v4 is the almost finalized version where dunamic ids are done at the end, and added into Analytics tables
 v5 is just a slight tweak on v4, where you are manually inserting grades and summaries because those auto tables aren't ready yet. Can loook back at v4 once those are done.
 v6 adds burst.
+v7 adds sorting position alignment by snap count high to low.
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(1)
+(1)(a)
 
 
-Create the season position table. You need the overall position along with all the percentages (for the alignment field).
+Create a table with all the positions a player played in a season. You need the overall position along with all the percentages (for the alignment field).
 
 Defense and offense positions are kept in different tables, so do defense then append offense to it.
 
-Since you need a position to do a report, make this table the basis for the reports and evaluations to follow so everything can join together.
 
 OUTPUT TABLES:
-#temp_season_positions
+#temp_season_positions_all
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	-- Check if #temp_season_positions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
-	DROP TABLE #temp_season_positions
+	-- Check if #temp_season_positions_all exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions_all') IS NOT NULL
+	DROP TABLE #temp_season_positions_all
 
-	CREATE TABLE #temp_season_positions (
+	CREATE TABLE #temp_season_positions_all (
 		bane_player_id INT
 		,nfl_player_id INT
 		,season INT
@@ -67,7 +67,7 @@ OUTPUT TABLES:
 	)
 
 
-	INSERT INTO #temp_season_positions
+	INSERT INTO #temp_season_positions_all
 	SELECT pl.id AS bane_player_id
 		,nfl_player_id
 		,season
@@ -115,7 +115,7 @@ OUTPUT TABLES:
 		AND snap_count_all >= 0
 
 
-	INSERT INTO #temp_season_positions
+	INSERT INTO #temp_season_positions_all
 	SELECT pl.id AS bane_player_id
 		,nfl_player_id
 		,season
@@ -160,6 +160,29 @@ OUTPUT TABLES:
 		ON pl.position_id = po.id
 	WHERE po.[team] = 'offense'
 		AND snap_count_all >= 0
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(1)(b)
+
+Order the positions played from most to least so they look good in the alignment variable.
+
+Since you need a position to do a report, make this table the basis for the reports and evaluations to follow, so everything can join together.
+
+
+OUTPUT TABLES:
+#temp_season_positions
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+	-- Check if #temp_season_positions exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
+	DROP TABLE #temp_season_positions
+
+	SELECT *
+	FROM #temp_season_positions_all
+
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
