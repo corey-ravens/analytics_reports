@@ -18,6 +18,7 @@ v12
 v13 adds ss and fs 
 v14 fills in blank grades for players who don't have enough snaps to get one
 v15 fills in the blank grade text with a statement.
+v16 uses the new endurance grades.
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -60,6 +61,7 @@ OUTPUT TABLES:
 			WHEN position_blt IN ('CB','NB') THEN 'CB'
 			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
 			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
+			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
 			ELSE position_blt
 		END AS position_group_blt
 		,snap_count_all
@@ -106,7 +108,9 @@ OUTPUT TABLES:
 		,nfl_player_id
 		,season
 		,season_type_adjusted
-		,position_blt
+		,CASE WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OG'
+			ELSE position_blt
+		END AS position_blt
 		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
 			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
 			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
@@ -115,6 +119,7 @@ OUTPUT TABLES:
 			WHEN position_blt IN ('CB','NB') THEN 'CB'
 			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
 			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
+			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
 			ELSE position_blt
 		END AS position_group_blt
 		,snap_count_all
@@ -433,6 +438,100 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
+
+	-- Check if #temp_new_endurances exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_new_endurances') IS NOT NULL
+	DROP TABLE #temp_new_endurances
+
+	SELECT bane_id AS bane_player_id
+		,CONCAT(last_name,', ',goes_by) AS player
+		,ee.season
+		,po.position_group_blt
+		,CASE WHEN played_weeks <= 4 THEN 1
+			WHEN played_weeks <= 8 THEN 2
+			WHEN played_weeks <= 12 THEN 3
+			WHEN played_weeks IS NOT NULL THEN 4
+			ELSE NULL
+		END AS played_bucket
+		,played_weeks
+		,pt.snap_count_od
+		,AVG(ee.endurance_percentile) AS endurance_percentile
+		,AVG(eg.fatigue_run_pass_ave) AS fatigue_run_pass_ave
+		,AVG((CASE WHEN eg.projected_reps_run IS NULL AND eg.projected_reps_pass IS NOT NULL THEN 0 ELSE eg.projected_reps_run END + CASE WHEN eg.projected_reps_pass IS NULL AND eg.projected_reps_run IS NOT NULL THEN 0 ELSE eg.projected_reps_pass END) * observed_max_reps) AS projected_reps_avg
+		,RANK() OVER (PARTITION BY ee.season, po.position_group_blt, CASE WHEN played_weeks <= 4 THEN 1 WHEN played_weeks <= 8 THEN 2 WHEN played_weeks <= 12 THEN 3 WHEN played_weeks IS NOT NULL THEN 4 ELSE NULL END ORDER BY AVG(ee.endurance_percentile) DESC) AS endurance_rank
+		,RANK() OVER (PARTITION BY ee.season, po.position_group_blt, CASE WHEN played_weeks <= 4 THEN 1 WHEN played_weeks <= 8 THEN 2 WHEN played_weeks <= 12 THEN 3 WHEN played_weeks IS NOT NULL THEN 4 ELSE NULL END ORDER BY AVG(eg.fatigue_run_pass_ave) DESC) AS fatigue_rank
+	INTO #temp_new_endurances
+	FROM Analytics.dbo.bane_endurance_grades ee
+	INNER JOIN AnalyticsWork.dbo.observed_reps_endurance_grades_game eg
+		ON ee.gsis_id = eg.gsis_id
+		AND ee.game_key = eg.game_key
+	INNER JOIN BaneProductionAnalytics.dbo.players pl
+		ON ee.bane_id = pl.id
+		AND pl.is_deleted = 0
+	INNER JOIN Analytics.dbo.stage_players_season_playtime pt
+		ON pl.nfl_id = pt.nfl_player_id
+		AND ee.season = pt.season
+		AND pt.season_type = 'reg'
+	LEFT JOIN #temp_season_positions po
+		ON pl.nfl_id = po.nfl_player_id
+		AND ee.season = po.season
+		AND po.season_type_adjusted = 'REGPOST'
+	WHERE played_weeks > 0
+		AND snap_count_od >= 40
+	GROUP BY bane_id
+		,CONCAT(last_name,', ',goes_by)
+		,ee.season
+		,po.position_group_blt
+		,CASE WHEN played_weeks <= 4 THEN 1
+			WHEN played_weeks <= 8 THEN 2
+			WHEN played_weeks <= 12 THEN 3
+			WHEN played_weeks IS NOT NULL THEN 4
+			ELSE NULL
+		END
+		,played_weeks
+		,pt.snap_count_od
+
+
+	-- Check if #temp_new_endurances_counts exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_new_endurances_counts') IS NOT NULL
+	DROP TABLE #temp_new_endurances_counts
+
+	SELECT season
+		,position_group_blt
+		,played_bucket
+		,COUNT(*) AS position_count
+	INTO #temp_new_endurances_counts
+	FROM #temp_new_endurances
+	GROUP BY season
+		,position_group_blt
+		,played_bucket
+
+
+	-- Check if #temp_new_endurance_grades exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_new_endurance_grades') IS NOT NULL
+	DROP TABLE #temp_new_endurance_grades
+
+	SELECT en.*
+		,(position_count - endurance_rank + 1) / CAST(position_count AS FLOAT) AS endurance_position_percentile
+		,gr.[value] AS endurance_grade
+		--,(position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) AS fatigue_percentile
+	INTO #temp_new_endurance_grades
+	FROM #temp_new_endurances en
+	INNER JOIN #temp_new_endurances_counts co
+		ON en.season = co.season
+		AND en.position_group_blt = co.position_group_blt
+		AND en.played_bucket = co.played_bucket
+	INNER JOIN BaneProductionAnalytics.dbo.grades gr
+		ON (CASE WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.90 THEN 7
+				WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.75 THEN 6
+				WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.40 THEN 5
+				WHEN (position_count - fatigue_rank + 1) / CAST(position_count AS FLOAT) >= 0.15 THEN 4
+				ELSE 3 
+			END) = gr.[value]
+		AND gr.scale_id = 5
+		AND gr.active = 1
+
+
 	-- Check if #temp_analytics_regressed_statistics, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_analytics_endurance') IS NOT NULL
 	DROP TABLE #temp_analytics_endurance
@@ -443,8 +542,9 @@ OUTPUT TABLES:
 		,1586 AS skill_id
 		,'A-END' AS skill_code
 		,gr.id AS grade_id
-		,CONCAT(projected_reps
-			,' reps before fatigue sets in ('
+		,CONCAT('Fatigues more than average after '
+			,CEILING(projected_reps_avg)
+			,' reps ('
 				,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3))
 					,CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),2) IN (11,12,13) THEN 'th'
 						WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st'
@@ -458,7 +558,7 @@ OUTPUT TABLES:
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON rp.bane_player_id = pl.id
 		AND pl.is_deleted = 0
-	INNER JOIN Analytics.dbo.analysis_players_season_endurance_work_rates en
+	INNER JOIN #temp_new_endurance_grades en
 		ON pl.id = en.bane_player_id
 		AND rp.season = en.season
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
@@ -762,32 +862,6 @@ OUTPUT TABLES:
 		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades)
 
 
-UPDATE #temp_analytics_evaluations
-SET explanation = 'Vinny is a potential low cost signing with some pass rush upside.  In 2019, he was a very good pass rusher by both stats and NGS and was a very good tackler to go along with it.  He is typically inconsistent in both tackling and run defense, sometimes showing very good performance but not holding it through year to year.'
-WHERE bane_player_id = 7037
-	AND skill_id = 1611
-
-UPDATE #temp_analytics_evaluations
-SET explanation = 'Matt is a solid starter who flashes playmaking ability.  He has been a very good or outstanding pass rusher the last two seasons, but it is important to note he leads the NFL in unblocked pressures the last two seasons.  This could indicate schemed up pressure moreso than personally generated pressure.  Matt is an inconsistent tackler and run defender.  He is an outstanding playmaker.'
-WHERE bane_player_id = 203146
-	AND skill_id = 1611
-
-UPDATE #temp_analytics_evaluations
-SET explanation = 'Ha Ha is a capable safety who should provide good value for a low cost.  He has a history of very good and sometimes outstanding coverage.  He has been an inconsistent tackler most of his career, but has had some very good seasons.  In 2019 he showed inconsistent ball skills, but had historically been very good in that area.'
-WHERE bane_player_id = 2698
-	AND skill_id = 1611
-
-UPDATE #temp_analytics_evaluations
-SET explanation = 'Dak is a high impact, potential Pro Bowl QB.  He has been very good at completing more passes than we''d expect for his entire career.  He was oustanding at making plays in 2019.'
-WHERE bane_player_id = 197847
-	AND skill_id = 1611
-
-UPDATE #temp_analytics_evaluations
-SET explanation = 'Antoine is a capable starter. He has a history of being an outstanding tackler. - both were large improvements over 2018.  He looks like a hard worker.'
-WHERE bane_player_id = 35287
-	AND skill_id = 1611
-
-
 	--INSERT INTO #temp_analytics_evaluations VALUES
 	--([bane_player_id],[season],[season_type_adjusted],[skill_id],[skill_code],[grade_id],[explanation])
 	--,(61386,2019,'REGPOST',1611,'A-FINAL',NULL,'Joey is the top DE in the league.  He is consistently at the top of the league in pressure rate, and in 3 of the last 4 years was also one of the most active DEs in the league in terms of making extra tackles.  While not a consistent top tier run defender, he has never been worst than inconsistent, and was oustanding in 2019.')
@@ -853,7 +927,7 @@ Analytics.dbo.analytics_reports
 		,alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
-		,'2020 Mid Season' AS [exposure]
+		,'2020 Season' AS [exposure]
 		,NULL AS [import_key]
 		,NULL AS [revised_overall_grade_id]
 		,'' AS [legacy_grade]
