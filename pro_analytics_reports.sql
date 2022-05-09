@@ -15,7 +15,8 @@ v9 orders positions from most to least played
 v10 adds skill codes
 v11 adds model grades
 v12
-v13 adds ss and fs and fills in blank grades for players who don't have enough snaps to get one
+v13 adds ss and fs 
+v14 fills in blank grades for players who don't have enough snaps to get one
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -79,7 +80,7 @@ OUTPUT TABLES:
 		,NULL AS snap_count_qb
 		,NULL AS snap_count_rb
 		,NULL AS snap_count_fb
-		,NULL AS snap_count_wr
+		,NULL AS snap_count_wide
 		,NULL AS snap_count_te
 		,NULL AS snap_count_slot
 		,NULL AS snap_count_lot
@@ -134,7 +135,7 @@ OUTPUT TABLES:
 		,snap_count_qb
 		,snap_count_rb
 		,snap_count_fb
-		,snap_count_wr
+		,snap_count_wide
 		,snap_count_te
 		,snap_count_slot
 		,snap_count_lot
@@ -182,7 +183,7 @@ OUTPUT TABLES:
 										,snap_count_qb
 										,snap_count_rb
 										,snap_count_fb
-										,snap_count_wr
+										,snap_count_wide
 										,snap_count_te
 										,snap_count_slot
 										,snap_count_lot
@@ -240,13 +241,16 @@ IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
 		,sp.season_type_adjusted
 		,position_blt
 		,position_group_blt
-		,alignment
+		,REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(alignment,'LOT','LT'),'LOG','LG'),'ROT','RT'),'ROG','RG'),'WR','WIDE'),'SLT','SLOT') AS alignment
 	INTO #temp_season_positions
 	FROM #temp_season_positions_all sp
 	INNER JOIN #temp_season_positions_pivot pv
 		ON sp.bane_player_id = pv.bane_player_id
 		AND sp.season = pv.season
 		AND sp.season_type_adjusted = pv.season_type_adjusted
+	WHERE sp.season = 2020
+		AND sp.season_type_adjusted = 'REGPOST'
+		AND snap_count_all >= 50
 	
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -255,7 +259,8 @@ IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
 
 Create the evaluations table.  It takes a few steps because the data that goes into evaluations lives in multiple different tables.
 
-First insert the regressed statistics into the evaluations table.
+First insert blank evaluation rows for every player - so that players that don't have enough snaps to get one of the grades still have a row, they aren't just missing
+in the reports.
 
 OUTPUT TABLES:
 #temp_analytics_evaluations
@@ -277,7 +282,86 @@ OUTPUT TABLES:
 	)
 
 
+-- First the regressed stat evaluations
 	INSERT INTO #temp_analytics_evaluations
+	SELECT bane_player_id
+		,rp.season
+		,rp.season_type_adjusted
+		,ma.skill_id
+		,sk.code AS skill_code
+		,NULL AS grade_id
+		,NULL AS explanation
+	FROM #temp_season_positions rp
+	INNER JOIN Analytics.dbo.map_regressed_statistics_to_skill_ids ma
+		ON CASE WHEN rp.position_blt = 'DS' THEN 'SS' ELSE rp.position_blt END = ma.position_code
+	INNER JOIN BaneProductionAnalytics.dbo.skills sk
+		ON ma.skill_id = sk.id
+
+-- Next the endurance grade
+	INSERT INTO #temp_analytics_evaluations
+	SELECT bane_player_id
+		,rp.season
+		,rp.season_type_adjusted
+		,1586 AS skill_id
+		,'A-END' AS skill_code
+		,NULL AS grade_id
+		,NULL AS explanation
+	FROM #temp_season_positions rp
+
+-- Next the strength and explosion grade (not used now, still being worked on, this is just a placeholder)
+/*
+	INSERT INTO #temp_analytics_evaluations
+	SELECT bane_player_id
+		,rp.season
+		,rp.season_type_adjusted
+		,1609 AS skill_id
+		,'A-STR/EXPL' AS skill_code
+		,NULL AS grade_id
+		,NULL AS explanation
+	FROM #temp_season_positions rp
+*/
+
+-- Next the play speed/projected 40 grades
+	INSERT INTO #temp_analytics_evaluations
+	SELECT bane_player_id
+		,rp.season
+		,rp.season_type_adjusted
+		,1610 AS skill_id
+		,'A-PLYSPD' AS skill_code
+		,NULL AS grade_id
+		,NULL AS explanation
+	FROM #temp_season_positions rp
+
+-- Next the burst/close on ball grade
+	INSERT INTO #temp_analytics_evaluations
+	SELECT bane_player_id
+		,rp.season
+		,rp.season_type_adjusted
+		,1615 AS skill_id
+		,'A-CLSONBALL/RNG' AS skill_code
+		,NULL AS grade_id
+		,NULL AS explanation
+	FROM #temp_season_positions rp
+	WHERE rp.position_blt IN ('DS','SS','FS')
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(2)(b)
+
+Create the evaluations table.  It takes a few steps because the data that goes into evaluations lives in multiple different tables.
+
+Join in the regressed statistics.
+
+OUTPUT TABLES:
+#temp_analytics_regressed_statistics
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+	-- Check if #temp_analytics_regressed_statistics, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_regressed_statistics') IS NOT NULL
+	DROP TABLE #temp_analytics_regressed_statistics
+
 	SELECT bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
@@ -292,6 +376,7 @@ OUTPUT TABLES:
 			,' ('
 			,CONCAT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
 		) AS explanation
+	INTO #temp_analytics_regressed_statistics
 	FROM #temp_season_positions rp
 	INNER JOIN Analytics.dbo.r_output_regressed_statistics rs
 		ON rp.nfl_player_id = rs.nfl_player_id
@@ -313,9 +398,19 @@ OUTPUT TABLES:
 		ON ma.skill_id = sk.id
 
 
+	UPDATE #temp_analytics_evaluations
+	SET grade_id = rs.grade_id
+		,explanation = rs.explanation
+	FROM #temp_analytics_regressed_statistics rs
+	WHERE #temp_analytics_evaluations.bane_player_id = rs.bane_player_id
+		AND #temp_analytics_evaluations.season = rs.season
+		AND #temp_analytics_evaluations.season_type_adjusted = rs.season_type_adjusted
+		AND #temp_analytics_evaluations.skill_id = rs.skill_id
+
+
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(2)(b)
+(2)(c)
 
 Insert endurance grade and strength/explosion grade (based on work rate) into the evaluations table.
 
@@ -326,11 +421,14 @@ Skill IDs of 06/13/2020:
 Strength/Explosion not ready yet as of 09/10/2020, taking it out.
 
 OUTPUT TABLES:
-#temp_analytics_evaluations
+#temp_analytics_endurance
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	INSERT INTO #temp_analytics_evaluations 	
+	-- Check if #temp_analytics_regressed_statistics, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_endurance') IS NOT NULL
+	DROP TABLE #temp_analytics_endurance
+
 	SELECT rp.bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
@@ -341,6 +439,7 @@ OUTPUT TABLES:
 			,' reps before fatigue sets in ('
 			,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
 		) AS explanation
+	INTO #temp_analytics_endurance
 	FROM #temp_season_positions rp
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON rp.bane_player_id = pl.id
@@ -352,6 +451,16 @@ OUTPUT TABLES:
 		ON en.endurance_grade = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
+
+
+	UPDATE #temp_analytics_evaluations
+	SET grade_id = rs.grade_id
+		,explanation = rs.explanation
+	FROM #temp_analytics_endurance rs
+	WHERE #temp_analytics_evaluations.bane_player_id = rs.bane_player_id
+		AND #temp_analytics_evaluations.season = rs.season
+		AND #temp_analytics_evaluations.season_type_adjusted = rs.season_type_adjusted
+		AND #temp_analytics_evaluations.skill_id = rs.skill_id
 
 /*
 	INSERT INTO #temp_analytics_evaluations 	
@@ -380,7 +489,7 @@ OUTPUT TABLES:
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(2)(c)
+(2)(d)
 
 Insert playing speed grade (based on projected 40) into the evaluations table.
 
@@ -390,7 +499,7 @@ Skill IDs of 06/13/2020:
 1610 - playing speed (A-PLYSPD)
 
 OUTPUT TABLES:
-#temp_analytics_evaluations
+#temp_analytics_play_speeds
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 	
@@ -437,7 +546,10 @@ OUTPUT TABLES:
 		,position_group_blt
 
 
-	INSERT INTO #temp_analytics_evaluations 	
+	-- Check if #temp_analytics_play_speeds, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_play_speeds') IS NOT NULL
+	DROP TABLE #temp_analytics_play_speeds
+		
 	SELECT rp.bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
@@ -445,6 +557,7 @@ OUTPUT TABLES:
 		,'A-PLYSPD' AS skill_code
 		,gr.id AS grade_id
 		,CONCAT(LEFT(CAST(ROUND(projected_forty,2) AS VARCHAR(255)),4),' projected 40 based on NGS.') AS explanation
+	INTO #temp_analytics_play_speeds
 	FROM #temp_season_positions rp
 	INNER JOIN #temp_projected_forties fo
 		ON rp.bane_player_id = fo.bane_player_id
@@ -456,16 +569,26 @@ OUTPUT TABLES:
 		ON (CASE WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.90 THEN 7
 				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.75 THEN 6
 				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.40 THEN 5
-				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.15 THEN 4
+				WHEN (CAST(fo.projected_forty_rank AS FLOAT) - 1) / NULLIF(fc.position_count,0) >= 0.10 THEN 4
 				ELSE 3 
 			END) = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
 
 
+	UPDATE #temp_analytics_evaluations
+	SET grade_id = rs.grade_id
+		,explanation = rs.explanation
+	FROM #temp_analytics_play_speeds rs
+	WHERE #temp_analytics_evaluations.bane_player_id = rs.bane_player_id
+		AND #temp_analytics_evaluations.season = rs.season
+		AND #temp_analytics_evaluations.season_type_adjusted = rs.season_type_adjusted
+		AND #temp_analytics_evaluations.skill_id = rs.skill_id
+
+
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(2)(d)
+(2)(e)
 
 Insert close on the ball/range (based on burst) into the evaluations table.
 
@@ -475,7 +598,7 @@ Skill IDs of 06/13/2020:
 1615 - close on the ball/range (A-CLSONBALL/RNG)
 
 OUTPUT TABLES:
-#temp_analytics_evaluations
+#temp_analytics_bursts
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 	
@@ -493,7 +616,7 @@ OUTPUT TABLES:
 		,RANK() OVER (PARTITION BY po.season, po.season_type_adjusted, CASE WHEN position_blt IN ('CB','NB') THEN 'CB' WHEN position_blt IN ('FS','SS','DS','DIME') THEN 'DS' END ORDER BY AVG(bu.burst_speed)) AS burst_average_rank
 	INTO #temp_ranked_bursts
 	FROM #temp_season_positions po
-	INNER JOIN (SELECT pl.id AS bane_player_id, 2019 AS season, 'REGPOST' AS season_type_adjusted, bu2.*, RANK() OVER (PARTITION BY gsis_player_id ORDER BY burst_speed DESC) AS burst_rank FROM AnalyticsWork.dbo.sarah_safety_bursts_20200614 bu2 INNER JOIN BaneProductionAnalytics.dbo.players pl ON bu2.gsis_player_id = pl.nfl_id AND pl.is_deleted = 0) AS bu
+	INNER JOIN (SELECT pl.id AS bane_player_id, 2020 AS season, 'REGPOST' AS season_type_adjusted, bu2.burst_speed, RANK() OVER (PARTITION BY gsis_player_id ORDER BY burst_speed DESC) AS burst_rank FROM AnalyticsWork.dbo.analysis_players_safety_bursts bu2 INNER JOIN BaneProductionAnalytics.dbo.players pl ON bu2.gsis_player_id = pl.nfl_id AND pl.is_deleted = 0) AS bu
 		ON po.bane_player_id = bu.bane_player_id
 		AND po.season = bu.season
 		AND po.season_type_adjusted = bu.season_type_adjusted
@@ -523,7 +646,10 @@ OUTPUT TABLES:
 		,position_group_blt
 
 
-	INSERT INTO #temp_analytics_evaluations 	
+	-- Check if #temp_analytics_bursts, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_bursts') IS NOT NULL
+	DROP TABLE #temp_analytics_bursts
+	
 	SELECT rp.bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
@@ -531,6 +657,7 @@ OUTPUT TABLES:
 		,'A-CLSONBALL/RNG' AS skill_code
 		,gr.id AS grade_id
 		,CONCAT(LEFT(CAST(ROUND(burst_average,2) AS VARCHAR(255)),4),' yards covered in first second of burst.') AS explanation
+	INTO #temp_analytics_bursts
 	FROM #temp_season_positions rp
 	INNER JOIN #temp_ranked_bursts bu
 		ON rp.bane_player_id = bu.bane_player_id
@@ -549,6 +676,16 @@ OUTPUT TABLES:
 			END) = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
+
+
+	UPDATE #temp_analytics_evaluations
+	SET grade_id = rs.grade_id
+		,explanation = rs.explanation
+	FROM #temp_analytics_bursts rs
+	WHERE #temp_analytics_evaluations.bane_player_id = rs.bane_player_id
+		AND #temp_analytics_evaluations.season = rs.season
+		AND #temp_analytics_evaluations.season_type_adjusted = rs.season_type_adjusted
+		AND #temp_analytics_evaluations.skill_id = rs.skill_id
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -574,6 +711,8 @@ OUTPUT TABLES:
 		,grade_id
 	INTO #temp_analytics_grades
 	FROM Analytics.dbo.analysis_players_pro_model_grades
+	WHERE season = 2020
+		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades)
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -602,6 +741,8 @@ OUTPUT TABLES:
 		,NULL AS grade_id
 		,'' AS explanation
 	FROM Analytics.dbo.analysis_players_pro_model_grades
+	WHERE season = 2020
+		AND created_date = (SELECT MAX(created_date) FROM Analytics.dbo.analysis_players_pro_model_grades)
 
 
 UPDATE #temp_analytics_evaluations
@@ -694,7 +835,7 @@ Analytics.dbo.analytics_reports
 		,alignment
 		,0 AS [imported_with_errors]
 		,0 AS [is_deleted]
-		,'2019 Season' AS [exposure]
+		,'2020 Mid Season' AS [exposure]
 		,NULL AS [import_key]
 		,NULL AS [revised_overall_grade_id]
 		,'' AS [legacy_grade]
