@@ -5,6 +5,7 @@
 
 v2 is most up to date overall
 V3 does alignment as a sum of last two college seasons
+v4 fixes overall report position
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -72,81 +73,20 @@ IF OBJECT_ID('tempdb..#temp_max_college_grade') IS NOT NULL
 		ON mg.bane_player_id = cg.bane_player_id
 		AND cg.college_grade >= 5.7
 	WHERE 1 = 1
-		--AND draft_model_year = 2021
 		AND model_grade_id IS NOT NULL
+		--AND draft_model_year = 2021		
 
 
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-(2)
-
-Get two players above and two players below on the sequence list.
-
-
-OUTPUT TABLES:
-#temp_analytics_sequences
-
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-	-- Check if #temp_analytics_sequence_ranks, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_analytics_sequence_ranks') IS NOT NULL
-	DROP TABLE #temp_analytics_sequence_ranks
-
-	SELECT bane_player_id
-		,position
-		,CONCAT(pl.goes_by,' ',pl.last_name) AS player
-		,RANK() OVER (PARTITION BY draft_model_year, draft_year, position, secondary_position ORDER BY model_without_board_score DESC) AS position_sequence_rank
-	INTO #temp_analytics_sequence_ranks
-	FROM Analytics.dbo.analysis_players_draft_model_grades mg
-	INNER JOIN BaneProductionAnalytics.dbo.players pl
-		ON mg.bane_player_id = pl.id
-		AND pl.is_deleted = 0
-	WHERE draft_model_year = 2021
-		AND draft_year = 2021
-		AND draft_model_version = 'POST_COMBINE'
-		AND draft_model_type = 'SALARIES'
-		AND secondary_position = 0
-
-
-	-- Check if #temp_analytics_sequence_neighbors, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_analytics_sequence_neighbors') IS NOT NULL
-	DROP TABLE #temp_analytics_sequence_neighbors
-
-	SELECT sr.bane_player_id
-		,sr.player
-		,sr.position
-		,sr.position_sequence_rank
-		,CASE WHEN s1.bane_player_id IS NOT NULL AND s2.bane_player_id IS NOT NULL THEN CONCAT(s1.player,', ',s2.player) 
-			WHEN s2.bane_player_id IS NOT NULL THEN s2.player
-			ELSE NULL
-		END AS two_above
-		,CASE WHEN s3.bane_player_id IS NOT NULL AND s4.bane_player_id IS NOT NULL THEN CONCAT(s3.player,', ',s4.player)
-			WHEN s4.bane_player_id IS NOT NULL THEN s4.player
-			ELSE NULL
-		END AS two_below
-	INTO #temp_analytics_sequence_neighbors
-	FROM #temp_analytics_sequence_ranks sr
-	LEFT JOIN #temp_analytics_sequence_ranks s1
-		ON sr.position = s1.position
-		AND sr.position_sequence_rank = s1.position_sequence_rank + 2
-	LEFT JOIN #temp_analytics_sequence_ranks s2
-		ON sr.position = s2.position
-		AND sr.position_sequence_rank = s2.position_sequence_rank + 1
-	LEFT JOIN #temp_analytics_sequence_ranks s3
-		ON sr.position = s3.position
-		AND sr.position_sequence_rank = s3.position_sequence_rank - 1
-	LEFT JOIN #temp_analytics_sequence_ranks s4
-		ON sr.position = s4.position
-		AND sr.position_sequence_rank = s4.position_sequence_rank - 2
-	WHERE sr.player = 'Joseph Ossai'
-
-	
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 (2)
 
 
 Create a table with all the positions a player played in a season. You need the overall position along with all the percentages (for the alignment field).
+
+Since you are using the alignment over two years, first make a table with his overall position in his draft year (that's what the report will be for) and 
+then do the percentages in a different step.  If you include the position_blt in the group by, players who played different positions their last two years
+get two rows.
 
 Defense and offense positions are kept in different tables, so do defense then append offense to it.
 
@@ -157,23 +97,26 @@ because you need a model grade to build these off of.
 
 
 OUTPUT TABLES:
-#temp_season_positions
+#temp_report_positions
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	-- Check if #temp_season_positions_all exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions_all') IS NOT NULL
-	DROP TABLE #temp_season_positions_all
+	-- Check if #temp_draft_season_positions exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_draft_season_positions') IS NOT NULL
+	DROP TABLE #temp_draft_season_positions
 
 	SELECT bane_player_id
 		,ag.gsis_player_id
 		,draft_year
 		,draft_year - 1 AS season
-		,season_type_adjusted
 		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
+			WHEN position_blt IN ('NT','DT3T') THEN 'DT'
+			WHEN position_blt IN ('DE43') THEN 'RUSH'
+			WHEN position_blt IN ('DE5T') THEN 'DE'
 			ELSE position_blt
 		END AS position_blt
 		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
+			WHEN position_blt IN ('DE5T') THEN 'DE'
 			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
 			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
 			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
@@ -184,6 +127,59 @@ OUTPUT TABLES:
 			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
 			ELSE position_blt
 		END AS position_group_blt
+	INTO #temp_draft_season_positions
+	FROM Analytics.dbo.analysis_players_season_position_defense_college de
+	INNER JOIN #temp_model_grades ag
+		ON de.gsis_player_id = ag.gsis_player_id
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON ag.bane_position_id = po.id
+	WHERE position_side_of_ball = 'defense'
+		AND defense_type = 'ALL'
+		AND snap_count_all > 0
+		AND de.season = draft_year - 1
+		AND season_type_adjusted = 'REGPOST'
+
+
+	INSERT INTO #temp_draft_season_positions
+	SELECT bane_player_id
+		,ag.gsis_player_id
+		,draft_year
+		,draft_year - 1 AS season
+		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
+			WHEN position_blt IN ('NT','DT3T') THEN 'DT'
+			WHEN position_blt IN ('DE43') THEN 'RUSH'
+			WHEN position_blt IN ('DE5T') THEN 'DE'
+			ELSE position_blt
+		END AS position_blt
+		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
+			WHEN position_blt IN ('DE5T') THEN 'DE'
+			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
+			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
+			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
+			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
+			WHEN position_blt IN ('CB','NB') THEN 'CB'
+			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
+			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
+			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
+			ELSE position_blt
+		END AS position_group_blt
+	FROM Analytics.dbo.analysis_players_season_position_offense_college de
+	INNER JOIN #temp_model_grades ag
+		ON de.gsis_player_id = ag.gsis_player_id
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON ag.bane_position_id = po.id
+	WHERE position_side_of_ball = 'offense'
+		AND snap_count_all > 0
+		AND de.season = draft_year - 1
+		AND season_type_adjusted = 'REGPOST'
+
+
+	-- Check if #temp_position_snap_counts exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_position_snap_counts') IS NOT NULL
+	DROP TABLE #temp_position_snap_counts
+
+	SELECT bane_player_id
+		,ag.gsis_player_id
 		,SUM(snap_count_all) AS snap_count_all
 		,SUM(snap_count_nt) AS snap_count_nt
 		,SUM(snap_count_dt3t) AS snap_count_dt3t
@@ -211,7 +207,7 @@ OUTPUT TABLES:
 		,NULL AS snap_count_oc
 		,NULL AS snap_count_rog
 		,NULL AS snap_count_rot
-	INTO #temp_season_positions_all
+	INTO #temp_position_snap_counts
 	FROM Analytics.dbo.analysis_players_season_position_defense_college de
 	INNER JOIN #temp_model_grades ag
 		ON de.gsis_player_id = ag.gsis_player_id
@@ -221,47 +217,14 @@ OUTPUT TABLES:
 		AND defense_type = 'ALL'
 		AND snap_count_all > 0
 		AND de.season >= draft_year - 2
+		AND season_type_adjusted = 'REGPOST'
 	GROUP BY bane_player_id
 		,ag.gsis_player_id
-		,draft_year
-		,draft_year - 1
-		,season_type_adjusted
-		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			ELSE position_blt
-		END
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
-			ELSE position_blt
-		END
 
 
-	INSERT INTO #temp_season_positions_all
+	INSERT INTO #temp_position_snap_counts
 	SELECT bane_player_id
 		,ag.gsis_player_id
-		,draft_year
-		,draft_year - 1 AS season
-		,season_type_adjusted
-		,CASE WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OG'
-			ELSE position_blt
-		END AS position_blt
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
-			ELSE position_blt
-		END AS position_group_blt
 		,SUM(snap_count_all) AS snap_count_all
 		,NULL AS snap_count_nt
 		,NULL AS snap_count_dt3t
@@ -297,25 +260,9 @@ OUTPUT TABLES:
 	WHERE position_side_of_ball = 'offense'
 		AND snap_count_all > 0
 		AND de.season >= draft_year - 2
+		AND season_type_adjusted = 'REGPOST'
 	GROUP BY bane_player_id
 		,ag.gsis_player_id
-		,draft_year
-		,draft_year - 1
-		,season_type_adjusted
-		,CASE WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OG'
-			ELSE position_blt
-		END
-		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
-			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
-			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DS'
-			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
-			--WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
-			WHEN position_blt IN ('CB','NB') THEN 'CB'
-			WHEN position_blt IN ('FS','SS','DS') THEN 'DS'
-			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
-			WHEN position_blt IN ('TE') AND po.translation IN ('OT','OG','OC') THEN 'OL'
-			ELSE position_blt
-		END
 
 
 -- Check if #temp_season_positions_unpivot exists, if it does drop it
@@ -323,14 +270,11 @@ OUTPUT TABLES:
 		DROP TABLE #temp_season_positions_unpivot
 
 	SELECT bane_player_id
-		,draft_year
-		,season
-		,season_type_adjusted
 		,CAST(UPPER(REPLACE(position_name,'snap_count_','')) AS NVARCHAR(4)) AS position_snaps
-		,value AS snap_count
-		,RANK() OVER (PARTITION BY bane_player_id, season, season_type_adjusted ORDER BY value DESC) AS position_rank
+		,[value] AS snap_count
+		,RANK() OVER (PARTITION BY bane_player_id ORDER BY [value] DESC) AS position_rank
 	INTO #temp_season_positions_unpivot
-	FROM #temp_season_positions_all
+	FROM #temp_position_snap_counts
 	UNPIVOT (value FOR position_name IN (snap_count_nt
 										,snap_count_dt3t
 										,snap_count_de5t
@@ -368,10 +312,8 @@ OUTPUT TABLES:
 		,CONCAT(', ',position_snaps,' (',CAST(ROUND(CAST(CASE WHEN snap_count > snap_count_all THEN snap_count_all ELSE snap_count END AS FLOAT) / NULLIF(snap_count_all,0) * 100,0) AS NVARCHAR(3)),'%)') AS position_display
 	INTO #temp_season_positions_display
 	FROM #temp_season_positions_unpivot up
-	INNER JOIN #temp_season_positions_all sp
+	INNER JOIN #temp_position_snap_counts sp
 		ON up.bane_player_id = sp.bane_player_id
-		AND up.season = sp.season
-		AND up.season_type_adjusted = sp.season_type_adjusted
 	WHERE snap_count > 0
 		AND position_rank <= 5
 		AND (CAST(snap_count AS FLOAT) / NULLIF(snap_count_all,0)) >= 0.05
@@ -382,14 +324,10 @@ IF OBJECT_ID('tempdb..#temp_season_positions_pivot') IS NOT NULL
 	DROP TABLE #temp_season_positions_pivot
 
 	SELECT bane_player_id
-		,season
-		,season_type_adjusted
 		,SUBSTRING(CONCAT([1],[2],[3],[4],[5]),3,255) AS alignment
 	INTO #temp_season_positions_pivot
 	FROM (
 	SELECT bane_player_id
-		,season
-		,season_type_adjusted
 		,position_rank
 		,position_display
 	FROM #temp_season_positions_display) up
@@ -397,27 +335,21 @@ IF OBJECT_ID('tempdb..#temp_season_positions_pivot') IS NOT NULL
 	ORDER BY bane_player_id
 
 
--- Check if #temp_season_positions exists, if it does drop it
-IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
-	DROP TABLE #temp_season_positions
+-- Check if #temp_report_positions exists, if it does drop it
+IF OBJECT_ID('tempdb..#temp_report_positions') IS NOT NULL
+	DROP TABLE #temp_report_positions
 
 	SELECT sp.bane_player_id
 		,draft_year
 		,sp.gsis_player_id
 		,sp.season
-		,sp.season_type_adjusted
 		,position_blt
 		,position_group_blt
 		,REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(alignment,'LOT','LT'),'LOG','LG'),'ROT','RT'),'ROG','RG'),'WR','WIDE'),'SLT','SLOT') AS alignment
-	INTO #temp_season_positions
-	FROM #temp_season_positions_all sp
+	INTO #temp_report_positions
+	FROM #temp_draft_season_positions sp
 	INNER JOIN #temp_season_positions_pivot pv
 		ON sp.bane_player_id = pv.bane_player_id
-		AND sp.season = pv.season
-		AND sp.season_type_adjusted = pv.season_type_adjusted
-	WHERE (sp.season = draft_year OR sp.season = draft_year - 1)
-		AND sp.season_type_adjusted = 'REGPOST'
-
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -446,6 +378,33 @@ OUTPUT TABLES:
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
+	-- Check if #temp_feature_contributions exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_feature_contributions') IS NOT NULL
+	DROP TABLE #temp_feature_contributions
+
+	SELECT fc.*
+		,CASE WHEN fc.feature = 'ps_play_making' AND mg.position_model_group  ='TE' THEN 'WR' 
+			WHEN fc.feature IN ('ps_play_making','ps_ball_protection','ps_inside_run','ps_outside_run','ps_pass_blocking','ps_vision_instincts') AND mg.position_model_group  ='TE' THEN 'RB' 
+			ELSE mg.position_model_group 
+		END AS position_model_group
+		,feature_group
+		,feature_explanation
+		,lower_is_better
+		,RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN ((fc.[value] IS NULL AND fc.feature_category = 'components') OR fc.[value] = 0 OR fc.feature LIKE 'conference%') THEN -999999 ELSE ABS(feature_contributions) END DESC) AS feature_rank
+		,RANK() OVER (PARTITION BY fc.bane_player_id, feature_group ORDER BY ABS(feature_contributions) DESC) AS feature_group_rank
+		,is_excluded
+	INTO #temp_feature_contributions
+	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions fc
+	INNER JOIN #temp_model_grades mg
+		ON fc.bane_player_id = mg.bane_player_id
+	INNER JOIN #temp_max_college_grade cg
+		ON fc.bane_player_id = cg.bane_player_id
+		AND cg.college_grade >= 5.7
+	INNER JOIN Analytics.dbo.map_draft_model_features mf
+		ON fc.feature = mf.feature
+		AND fc.feature_category = mf.feature_category
+
+
 	-- Check if #temp_feature_contribution_counts exists, if it does drop it
 	IF OBJECT_ID('tempdb..#temp_feature_contribution_counts') IS NOT NULL
 	DROP TABLE #temp_feature_contribution_counts
@@ -455,12 +414,7 @@ OUTPUT TABLES:
 		,position_model_group
 		,COUNT(*) AS feature_count
 	INTO #temp_feature_contribution_counts
-	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions_2021 fc
-	INNER JOIN #temp_max_college_grade cg
-		ON fc.bane_player_id = cg.bane_player_id
-		AND cg.college_grade >= 5.7
-	INNER JOIN #temp_model_grades mg
-		ON fc.bane_player_id = mg.bane_player_id
+	FROM #temp_feature_contributions
 	GROUP BY feature_category
 		,feature
 		,position_model_group
@@ -471,106 +425,74 @@ OUTPUT TABLES:
 	DROP TABLE #temp_feature_contribution_grades
 
 	SELECT fc.*
-		,RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN ((fc.[value] IS NULL AND fc.feature_category = 'components') OR fc.[value] = 0 OR fc.feature LIKE 'conference%') THEN -999999 ELSE ABS(feature_contributions) END DESC) AS feature_rank
-		,RANK() OVER (PARTITION BY fc.bane_player_id, feature_group ORDER BY ABS(feature_contributions) DESC) AS feature_group_rank
-		,ABS(feature_contributions) / NULLIF((SELECT SUM(ABS(feature_contributions)) FROM AnalyticsSandbox.dbo._draft_model_feature_contributions_2021 fc2 WHERE fc.bane_player_id = fc2.bane_player_id),0) AS feature_percentage
+		,CASE WHEN fc.feature_category = 'production' AND RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN fc.feature_group_rank > 1 THEN 9999999 ELSE feature_rank END) = 3 THEN 3.5
+			ELSE RANK() OVER (PARTITION BY fc.bane_player_id, fc.feature_category ORDER BY CASE WHEN fc.feature_group_rank > 1 THEN 9999999 ELSE feature_rank END)
+		END AS feature_display_rank
+		,ABS(feature_contributions) / NULLIF((SELECT SUM(ABS(feature_contributions)) FROM #temp_feature_contributions fc2 WHERE fc.bane_player_id = fc2.bane_player_id),0) AS feature_percentage
 		,CASE WHEN cc.feature_count < 10 THEN NULL ELSE
-			(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY [value] * mf.lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
-						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY [value] * mf.lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
-						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY [value] * mf.lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
-						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY [value] * mf.lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
+			(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
+						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
+						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
+						WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature, fc.position_model_group ORDER BY [value] * lower_is_better DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
 						ELSE 3 
 			END) 
 		END AS feature_grade
-		/*,(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY fc.feature_contributions DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
-					WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY fc.feature_contributions DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
-					WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY fc.feature_contributions DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
-					WHEN (feature_count - RANK() OVER (PARTITION BY fc.feature_category, fc.feature ORDER BY fc.feature_contributions DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
-					ELSE 3 
-		END) AS feature_grade*/
-		,feature_explanation
-	--INTO #temp_feature_contribution_grades
-	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions_2021 fc
-	LEFT JOIN Analytics.dbo.map_draft_model_features mf
-		ON fc.feature = mf.feature
-		AND fc.feature_category = mf.feature_category
-	INNER JOIN #temp_model_grades mg
-		ON fc.bane_player_id = mg.bane_player_id
-	LEFT JOIN #temp_feature_contribution_counts cc
+	INTO #temp_feature_contribution_grades
+	FROM #temp_feature_contributions fc
+	INNER JOIN #temp_feature_contribution_counts cc
 		ON fc.feature_category = cc.feature_category
 		AND fc.feature = cc.feature
-		AND CASE WHEN cc.feature = 'ps_play_making' AND mg.position_model_group  ='TE' THEN 'WR' 
-			WHEN cc.feature IN ('ps_play_making','ps_ball_protection','ps_inside_run','ps_outside_run','ps_pass_blocking','ps_vision_instincts') AND mg.position_model_group  ='TE' THEN 'RB' 
-			ELSE mg.position_model_group END = cc.position_model_group
-	INNER JOIN #temp_max_college_grade cg
-		ON fc.bane_player_id = cg.bane_player_id
-		AND cg.college_grade >= 5.7
-	WHERE mf.is_excluded = 0
+		AND fc.position_model_group = cc.position_model_group
+	WHERE is_excluded = 0 --need to do this here because you want them included in the feature percentage calculation
 
 
-
-	-- Check if #temp_feature_contributions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_feature_contributions') IS NOT NULL
-	DROP TABLE #temp_feature_contributions
-
-	SELECT *
-		,CASE WHEN feature_category = 'production' AND RANK() OVER (PARTITION BY bane_player_id, feature_category ORDER BY CASE WHEN feature_group_rank > 1 THEN 9999999 ELSE feature_rank END) = 3 THEN 3.5
-			ELSE RANK() OVER (PARTITION BY bane_player_id, feature_category ORDER BY CASE WHEN feature_group_rank > 1 THEN 9999999 ELSE feature_rank END)
-		END AS feature_display_rank
-	INTO #temp_feature_contributions
-	FROM #temp_feature_contribution_grades
-
-
-	INSERT INTO #temp_feature_contributions
-	--split out by model position or something, look at variance of it this position vs others.
-	SELECT fc.bane_player_id
-		,fc.feature
-		,fc.[value]
-		,fc.feature_contributions
-		,fc.feature_category
-		,NULL AS feature_rank
-		,NULL AS feature_group_rank
-		,NULL AS feature_percentage
-		,(CASE WHEN (feature_count - RANK() OVER (ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
-					WHEN (feature_count - RANK() OVER (ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
-					WHEN (feature_count - RANK() OVER (ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
-					WHEN (feature_count - RANK() OVER (ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
+--Add the quality of competition variables - they are graded differently
+	INSERT INTO #temp_feature_contribution_grades
+	SELECT fc.*
+		,3 AS feature_display_rank
+		,fg.feature_percentage
+		,(CASE WHEN (feature_count - RANK() OVER (PARTITION BY fc.position_model_group ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.90 THEN 7
+					WHEN (feature_count - RANK() OVER (PARTITION BY fc.position_model_group ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.75 THEN 6
+					WHEN (feature_count - RANK() OVER (PARTITION BY fc.position_model_group ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.40 THEN 5
+					WHEN (feature_count - RANK() OVER (PARTITION BY fc.position_model_group ORDER BY CASE WHEN fc.feature = 'conference_division_FBS' THEN fc.feature_contributions + 4000000 WHEN fc.feature = 'conference_division_FCS' THEN fc.feature_contributions + 3000000 WHEN fc.feature = 'conference_division_DIV_II' THEN fc.feature_contributions + 2000000 WHEN fc.feature = 'conference_division_DIV_III' THEN fc.feature_contributions + 1000000 ELSE fc.feature_contributions END DESC) + 1) / CAST(feature_count AS FLOAT) >= 0.15 THEN 4
 					ELSE 3 
 		END) AS feature_grade
-		,mf.feature_explanation
-		,3 AS feature_display_rank
-	FROM AnalyticsSandbox.dbo._draft_model_feature_contributions_2021 fc
-	LEFT JOIN Analytics.dbo.map_draft_model_features mf
-		ON fc.feature = mf.feature
-		AND fc.feature_category = mf.feature_category
-	LEFT JOIN #temp_feature_contribution_counts cc
+	FROM #temp_feature_contributions fc
+	INNER JOIN #temp_feature_contribution_counts cc
 		ON fc.feature_category = cc.feature_category
 		AND fc.feature = cc.feature
-	INNER JOIN #temp_max_college_grade cg
-		ON fc.bane_player_id = cg.bane_player_id
-		AND cg.college_grade >= 5.7
-	WHERE mf.is_excluded = 0
-		AND fc.feature LIKE 'conference%'
+		AND fc.position_model_group = cc.position_model_group
+	LEFT JOIN #temp_feature_contribution_grades fg
+		ON fc.bane_player_id = fg.bane_player_id
+		AND fc.feature = fg.feature
+	WHERE fc.feature LIKE 'conference%'
+		AND fc.feature_category <> 'final'
 		AND fc.[value] = 1
 
 
-	UPDATE #temp_feature_contributions
+--Remove the extra quality of comp features, you kept them in initially so you can get accurate percentages that you can join back in.
+	DELETE FROM #temp_feature_contribution_grades
+	WHERE feature LIKE 'conference%'
+		AND feature_display_rank <> 3
+
+--Turn any null measurables into a grade of 4
+	UPDATE #temp_feature_contribution_grades
 	SET feature_grade = 4
 	WHERE feature_category = 'measurables'
 		AND [value] IS NULL
-		AND feature_grade = 3
+		--AND feature_grade = 3
 
 
 /*
 	select *
-	from #temp_feature_contributions
+	from #temp_feature_contribution_grades
 	where bane_player_id = 261591
 */
 
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(###
+(##
 
 Create the evaluations table.  
 
@@ -616,19 +538,16 @@ OUTPUT TABLES:
 			ELSE NULL
 		END AS skill_code
 		,gr.id AS grade_id
-		,CASE WHEN feature_category IN ('production') AND feature_display_rank = 3 THEN CONCAT(feature_explanation,'<br /><br />')	
-			ELSE CONCAT(feature_explanation,'<br />(',CAST(CEILING(feature_percentage*100) AS NVARCHAR(3)),'% of model contribution)') 
-		END AS explanation
+		,CONCAT(feature_explanation,'<br />(',CAST(CEILING(feature_percentage*100) AS NVARCHAR(3)),'% of model contribution)') AS explanation
 		--,feature_grade
 		--,feature_category
 		--,feature_display_rank
-	FROM #temp_feature_contributions fc
+	FROM #temp_feature_contribution_grades fc
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
 		ON fc.feature_grade = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
 	WHERE feature_display_rank IN (1,2,3)
-	AND bane_player_id NOT IN (291440,282607,234368,233020,261205,286832,233195,261591,259632)
 	ORDER BY feature_category, feature_display_rank
 
 
@@ -737,7 +656,7 @@ Analytics.dbo.analytics_reports
 		,NULL AS [all_star_game_id]
 	INTO #temp_analytics_reports_with_seasons
 	FROM Analytics.dbo.analytics_reports re
-	INNER JOIN #temp_season_positions rp
+	INNER JOIN #temp_report_positions rp
 		ON re.player_id = rp.bane_player_id
 		AND rp.season = 2021
 	INNER JOIN BaneProductionAnalytics.dbo.positions po
@@ -778,7 +697,7 @@ Analytics.dbo.analytics_reports
 		,NULL AS [stratbridge_season_id]
 		,0 AS [incomplete]
 		,NULL AS [all_star_game_id]
-	FROM #temp_season_positions rp
+	FROM #temp_report_positions rp
 	INNER JOIN BaneProductionAnalytics.dbo.positions po
 		ON rp.position_blt = po.code
 	INNER JOIN #temp_model_grades gr
@@ -915,3 +834,14 @@ Analytics.dbo.analytics_evaluations
 	WHERE table_name = 'analytics_evaluations'
 
 
+/*
+TRUNCATE TABLE Analytics.dbo.bane_analytics_reports
+INSERT INTO Analytics.dbo.bane_analytics_reports
+SELECT *
+FROM Analytics.dbo.analytics_reports
+
+TRUNCATE TABLE Analytics.dbo.bane_analytics_evaluations
+INSERT INTO Analytics.dbo.bane_analytics_evaluations
+SELECT *
+FROM Analytics.dbo.analytics_evaluations
+*/
