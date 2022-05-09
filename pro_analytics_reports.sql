@@ -6,23 +6,22 @@
 (1)
 
 
-Create the report position table. You need the overall position along with all the percentages (for the alignment field).
+Create the season position table. You need the overall position along with all the percentages (for the alignment field).
 
 Defense and offense positions are kept in different tables, so do defense then append offense to it.
 
-Since you need position data for any report, just make this the starting point that the reports and evaluations build off of.
-You're only going to have one report per player season (and season type), so assign the report id here.  
+Since you need a position to do a report, make this table the basis for the reports and evaluations to follow so everything can join together.
 
 OUTPUT TABLES:
-#temp_report_positions
+#temp_season_positions
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
-	-- Check if #temp_season_positions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
-	DROP TABLE #temp_season_positions
+	-- Check if #temp_season_positions_all exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions_all') IS NOT NULL
+	DROP TABLE #temp_season_positions_all
 
-	CREATE TABLE #temp_season_positions (
+	CREATE TABLE #temp_season_positions_all (
 		bane_player_id INT
 		,nfl_player_id INT
 		,season INT
@@ -55,7 +54,8 @@ OUTPUT TABLES:
 		,display_rot NVARCHAR(20)
 	)
 
-	INSERT INTO #temp_season_positions
+
+	INSERT INTO #temp_season_positions_all
 	SELECT pl.id AS bane_player_id
 		,nfl_player_id
 		,season
@@ -103,7 +103,7 @@ OUTPUT TABLES:
 		AND snap_count_all >= 0
 
 
-	INSERT INTO #temp_season_positions
+	INSERT INTO #temp_season_positions_all
 	SELECT pl.id AS bane_player_id
 		,nfl_player_id
 		,season
@@ -135,7 +135,6 @@ OUTPUT TABLES:
 		,CASE WHEN CAST(snap_count_wr AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', WR (',CAST(ROUND(CAST(snap_count_wr AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_wr
 		,CASE WHEN CAST(snap_count_te AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', TE (',CAST(ROUND(CAST(snap_count_te AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_te
 		,CASE WHEN CAST(snap_count_slot AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', SLOT (',CAST(ROUND(CAST(snap_count_slot AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_slot
-		--,CASE WHEN CAST((snap_count_inside + snap_count_slot + snap_count_flex) AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', SLOT (',CAST(ROUND(CAST((snap_count_inside + snap_count_slot + snap_count_flex) AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_slot
 		,CASE WHEN CAST(snap_count_lot AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', LT (',CAST(ROUND(CAST(snap_count_lot AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_lot
 		,CASE WHEN CAST(snap_count_log AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', LG (',CAST(ROUND(CAST(snap_count_log AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_log
 		,CASE WHEN CAST(snap_count_oc AS FLOAT) / NULLIF(snap_count_all ,0) >= 0.05 THEN CONCAT(', OC (',CAST(ROUND(CAST(snap_count_oc AS FLOAT) / NULLIF(snap_count_all ,0) * 100,0) AS NVARCHAR(3)),'%)') ELSE '' END AS display_oc
@@ -151,47 +150,16 @@ OUTPUT TABLES:
 		AND snap_count_all >= 0
 
 
+	-- Check if #temp_season_positions exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_season_positions') IS NOT NULL
+	DROP TABLE #temp_season_positions
 
---
--- Update the next id table to 299999
--- THIS IS JUST FOR TESTING, WHEN YOU GO LIVE REMOVE THIS
---
-	UPDATE [Analytics].[dbo].surrogate_key
-	SET next_key = 299999
-	WHERE table_name = 'test_reports'
-
--- Find the next unique report id 
-DECLARE @next_id INT
-EXEC Analytics.dbo.sp_get_next_surrogate_key 'test_reports', @next_id OUTPUT
-
-	-- Check if #temp_report_positions exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_report_positions') IS NOT NULL
-	DROP TABLE #temp_report_positions
-
-	SELECT bane_player_id
-		,nfl_player_id
-		,season
-		,season_type_adjusted
-		,@next_id  + ROW_NUMBER() OVER (ORDER BY nfl_player_id, season, season_type_adjusted) AS report_id
-		,GETDATE() AS created_at
-		,GETDATE() AS updated_at
-		,position_blt
-		,po.id AS bane_position_id
-		,SUBSTRING(CONCAT(display_nt,display_dt3t,display_de5t,display_de43,display_rush,display_sam,display_ob34,display_mike,display_will,display_ib,display_cb,display_nb,display_ds,display_qb,display_rb,display_fb,display_wr,display_te,display_slot,display_lot,display_log,display_oc,display_rog,display_rot),3,255) AS alignment
-	INTO #temp_report_positions
-	FROM #temp_season_positions se
-	INNER JOIN BaneProductionAnalytics.dbo.positions po
-		ON se.position_blt = po.code
-	WHERE nfl_player_id = 38589
+	SELECT *
+	INTO #temp_season_positions
+	FROM #temp_season_positions_all
+	WHERE bane_player_id = 7037
 		AND season = 2019
 		AND season_type_adjusted = 'REGPOST'
-
-
--- Update the next id table with all the ones you just wrote in
-	UPDATE [Analytics].[dbo].surrogate_key
-	SET next_key = (SELECT MAX(report_id) FROM #temp_report_positions)
-	WHERE table_name = 'test_reports'
-
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -217,9 +185,9 @@ OUTPUT TABLES:
 		,season_type_adjusted NVARCHAR(7)
 		,skill_id INT
 		,grade_id INT
-		,report_id INT
 		,explanation NVARCHAR(MAX)
 	)
+
 
 	INSERT INTO #temp_analytics_evaluations 	
 	SELECT bane_player_id
@@ -227,7 +195,6 @@ OUTPUT TABLES:
 		,rp.season_type_adjusted
 		,ma.skill_id
 		,gr.id AS grade_id
-		,report_id
 		,CONCAT(ex.explanation_start
 			,' '
 			,CAST(ROUND(statistic_value*multiply_by,1) AS NVARCHAR(10))
@@ -236,7 +203,7 @@ OUTPUT TABLES:
 			,' ('
 			,CONCAT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(statistic_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
 		) AS explanation
-	FROM #temp_report_positions rp
+	FROM #temp_season_positions rp
 	INNER JOIN Analytics.dbo.r_output_regressed_statistics rs
 		ON rp.nfl_player_id = rs.nfl_player_id
 		AND rp.season = rs.season
@@ -276,12 +243,11 @@ OUTPUT TABLES:
 		,rp.season_type_adjusted
 		,9000 AS skill_id
 		,gr.id AS grade_id
-		,rp.report_id
 		,CONCAT(projected_reps
 			,' reps before fatigue sets in ('
 			,CONCAT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(endurance_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile).')
 		) AS explanation
-	FROM #temp_report_positions rp
+	FROM #temp_season_positions rp
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON rp.bane_player_id = pl.id
 		AND pl.is_deleted = 0
@@ -300,12 +266,11 @@ OUTPUT TABLES:
 		,rp.season_type_adjusted
 		,1367 AS skill_id
 		,gr.id AS grade_id
-		,rp.report_id
 		,CONCAT(reps_to_start
 			,' reps to reach full strength ('
 			,CONCAT(CAST(ROUND(work_rate_position_percentile*100,0) AS NVARCHAR(3)),CASE WHEN RIGHT(CAST(ROUND(work_rate_position_percentile*100,0) AS NVARCHAR(3)),1) IN (1) THEN 'st' WHEN RIGHT(CAST(ROUND(work_rate_position_percentile*100,0) AS NVARCHAR(3)),1) IN (2) THEN 'nd' WHEN RIGHT(CAST(ROUND(work_rate_position_percentile*100,0) AS NVARCHAR(3)),1) IN (3) THEN 'rd' ELSE 'th' END,' percentile work rate).')
 		) AS explanation
-	FROM #temp_report_positions rp
+	FROM #temp_season_positions rp
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON rp.bane_player_id = pl.id
 		AND pl.is_deleted = 0
@@ -371,9 +336,8 @@ OUTPUT TABLES:
 		,rp.season_type_adjusted
 		,1368 AS skill_id
 		,gr.id AS grade_id
-		,rp.report_id
 		,CONCAT(LEFT(CAST(ROUND(projected_forty,2) AS VARCHAR(255)),4),' projected 40 based on NGS.') AS explanation
-	FROM #temp_report_positions rp
+	FROM #temp_season_positions rp
 	INNER JOIN #temp_projected_forties fo
 		ON rp.bane_player_id = fo.bane_player_id
 		AND rp.season = fo.season
@@ -395,69 +359,187 @@ OUTPUT TABLES:
 
 (2)(d)
 
-Insert final summaries into the evaluations table.
+Insert final summary rows into the evaluations table.
 
 OUTPUT TABLES:
 #temp_analytics_evaluations
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 	
---put in final summary row
 	INSERT INTO #temp_analytics_evaluations
 	SELECT bane_player_id
 		,rp.season
 		,rp.season_type_adjusted
 		,1379 AS skill_id
 		,NULL AS grade_id
-		,rp.report_id
-		,'Vinny is a potential low cost signing with some pass rush upside.  in 2019, he was a 6 pass rusher by both stats and NGS and was a 6 tackler to go along with it.  He isn''t a consistently good tackler - he was only a 4 in 2018.' AS explanation
-	FROM #temp_report_positions rp
-
-
---put in final summary update row
-	INSERT INTO #temp_analytics_evaluations
-	SELECT bane_player_id
-		,rp.season
-		,rp.season_type_adjusted
-		,1380 AS skill_id
-		,NULL AS grade_id
-		,rp.report_id
 		,'' AS explanation
-	FROM #temp_report_positions rp
-
-
---put in revised final summary row
-	INSERT INTO #temp_analytics_evaluations 	
-	SELECT bane_player_id
-		,rp.season
-		,rp.season_type_adjusted
-		,1454 AS skill_id
-		,NULL AS grade_id
-		,rp.report_id
-		,'' AS explanation
-	FROM #temp_report_positions rp
-
-
---put in misc notes row
-	INSERT INTO #temp_analytics_evaluations 	
-	SELECT bane_player_id
-		,rp.season
-		,rp.season_type_adjusted
-		,1381 AS skill_id
-		,NULL AS grade_id
-		,rp.report_id
-		,'' AS explanation
-	FROM #temp_report_positions rp
+	FROM #temp_season_positions rp
 
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 (2)(e)
 
-Add in the unique evaluation ids.
+Manually add the final summaries text by updating the final summary rows.
+
+Also manually insert final summary updates or revised final summarries here. You don't automatically add those in because not all reports have them.
+
+As of 06/14/2020 skill ids:
+1379 - final summary
+1380 - final summary update
+1454 - revised final summary
+1381 - workout/misc. notes
 
 OUTPUT TABLES:
-#temp_analytics_evaluations_with_ids
+#temp_analytics_evaluations
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+UPDATE #temp_analytics_evaluations
+SET explanation = 'Vinny is a potential low cost signing with some pass rush upside.  in 2019, he was a 6 pass rusher by both stats and NGS and was a 6 tackler to go along with it.  He isn''t a consistently good tackler - he was only a 4 in 2018.'
+WHERE skill_id = 1379
+	AND season = 2019
+	AND season_type_adjusted = 'REGPOST'
+	AND bane_player_id = 7037
+
+/*
+
+INSERT INTO #temp_analytics_evaluations VALUES
+([bane_player_id],[season],[season_type_adjusted],[skill_id],[grade_id],[explanation])
+
+*/
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(3)
+
+
+Create the overall grades table.  This will ultimately just be a pull from an updated model grades table, but for now (06/14/2020)
+
+OUTPUT TABLES:
+#temp_analytics_grades
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+	-- Check if #temp_analytics_grades exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_grades') IS NOT NULL
+	DROP TABLE #temp_analytics_grades
+
+	SELECT bane_player_id
+		,season
+		,season_type_adjusted
+		,NULL AS grade_id
+	INTO #temp_analytics_grades
+	FROM #temp_season_positions
+
+	UPDATE #temp_analytics_grades
+	SET grade_id = 47
+	WHERE season = 2019
+		AND season_type_adjusted = 'REGPOST'
+		AND bane_player_id = 7037
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(4)
+
+
+Add the new reports into the reports table.  Create a temp one first so you have the report ids to join the evaluations to, because the official analytics_reports
+table doesn't have enough info to match on.
+
+OUTPUT TABLES:
+#temp_analytics_reports_with_seasons
+Analytics.dbo.analytics_reports
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+--
+-- Update the next id table to 299999
+-- THIS IS JUST FOR TESTING, WHEN YOU GO LIVE REMOVE THIS
+--
+	UPDATE [Analytics].[dbo].surrogate_key
+	SET next_key = 299999
+	WHERE table_name = 'test_reports'
+
+-- Find the next unique report id 
+	DECLARE @next_report_id INT
+	EXEC Analytics.dbo.sp_get_next_surrogate_key 'test_reports', @next_report_id OUTPUT
+
+
+	-- Check if #temp_analytics_reports_with_seasons exists, if it does drop it
+	IF OBJECT_ID('tempdb..#temp_analytics_reports_with_seasons') IS NOT NULL
+	DROP TABLE #temp_analytics_reports_with_seasons
+
+	SELECT @next_report_id  + ROW_NUMBER() OVER (ORDER BY rp.bane_player_id, rp.season, rp.season_type_adjusted) AS id
+		,70 AS author_id
+		,gr.grade_id
+		,po.id AS position_id
+		,'analytics-pro' AS [type]
+		,0 AS submitted
+		,GETDATE() AS created_at
+		,GETDATE() AS updated_at
+		,rp.bane_player_id AS player_id
+		,SUBSTRING(CONCAT(display_nt,display_dt3t,display_de5t,display_de43,display_rush,display_sam,display_ob34,display_mike,display_will,display_ib,display_cb,display_nb,display_ds,display_qb,display_rb,display_fb,display_wr,display_te,display_slot,display_lot,display_log,display_oc,display_rog,display_rot),3,255) AS alignment
+		,0 AS [imported_with_errors]
+		,0 AS [is_deleted]
+		,'' AS [exposure]
+		,NULL AS [import_key]
+		,NULL AS [revised_overall_grade_id]
+		,'' AS [legacy_grade]
+		,NULL AS [stratbridge_season_id]
+		,0 AS [incomplete]
+		,NULL AS [all_star_game_id]
+		,rp.season
+		,rp.season_type_adjusted
+	INTO #temp_analytics_reports_with_seasons
+	FROM #temp_season_positions rp
+	INNER JOIN BaneProductionAnalytics.dbo.positions po
+		ON rp.position_blt = po.code
+	INNER JOIN #temp_analytics_grades gr
+		ON rp.bane_player_id = gr.bane_player_id
+		AND rp.season = gr.season
+		AND rp.season_type_adjusted = gr.season_type_adjusted
+
+
+	--INSERT INTO Analytics.dbo.analytics_reports
+	SELECT id
+		,author_id
+		,grade_id
+		,position_id
+		,[type]
+		,submitted
+		,created_at
+		,updated_at
+		,player_id
+		,alignment
+		,[imported_with_errors]
+		,[is_deleted]
+		,[exposure]
+		,[import_key]
+		,[revised_overall_grade_id]
+		,[legacy_grade]
+		,[stratbridge_season_id]
+		,[incomplete]
+		,[all_star_game_id]
+	FROM #temp_analytics_reports_with_seasons rp
+
+
+-- Update the next id table with all the ones you just wrote in
+	UPDATE [Analytics].[dbo].surrogate_key
+	SET next_key = (SELECT MAX(id) FROM Analytics.dbo.analytics_reports)
+	WHERE table_name = 'test_reports'
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(5)
+
+
+Add the new evaluations into the evaluatons table.
+
+OUTPUT TABLES:
+Analytics.dbo.analytics_evaluations
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -470,75 +552,29 @@ OUTPUT TABLES:
 	WHERE table_name = 'test_evals'
 
 -- Find the next unique report id 
-DECLARE @next_eval_id INT
-EXEC Analytics.dbo.sp_get_next_surrogate_key 'test_evals', @next_eval_id OUTPUT
+	DECLARE @next_eval_id INT
+	EXEC Analytics.dbo.sp_get_next_surrogate_key 'test_evals', @next_eval_id OUTPUT
 
-	-- Check if #temp_analytics_evaluations_with_ids exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_analytics_evaluations_with_ids') IS NOT NULL
-	DROP TABLE #temp_analytics_evaluations_with_ids
 
-	SELECT *
-		,@next_eval_id  + ROW_NUMBER() OVER (ORDER BY bane_player_id, season, season_type_adjusted, skill_id) AS evaluation_id
+	--INSERT INTO Analytics.dbo.analytics_evaluations
+	SELECT @next_eval_id  + ROW_NUMBER() OVER (ORDER BY ev.bane_player_id, ev.season, ev.season_type_adjusted, ev.skill_id) AS id
+		,ev.skill_id
+		,ev.grade_id
+		,re.id AS report_id
+		,ev.explanation
 		,GETDATE() AS created_at
 		,GETDATE() AS updated_at
 		,0 AS is_deleted
 		,NULL AS interview_id
 		,NULL AS advance_id
-	INTO #temp_analytics_evaluations_with_ids
-	FROM #temp_analytics_evaluations
+	FROM #temp_analytics_reports_with_seasons re
+	INNER JOIN #temp_analytics_evaluations ev
+		ON re.player_id = ev.bane_player_id
+		AND re.season = ev.season
+		AND re.season_type_adjusted = ev.season_type_adjusted
 
 
 -- Update the next id table with all the ones you just wrote in
 	UPDATE [Analytics].[dbo].surrogate_key
-	SET next_key = (SELECT MAX(report_id) FROM #temp_report_positions)
+	SET next_key = (SELECT MAX(id) FROM Analytics.dbo.analytics_evaluations)
 	WHERE table_name = 'test_evals'
-
-
-
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-(3)
-
-
-Create the reports table.
-
-OUTPUT TABLES:
-#temp_analytics_reports
-
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-
-	-- Check if #temp_analytics_reports exists, if it does drop it
-	IF OBJECT_ID('tempdb..#temp_analytics_reports') IS NOT NULL
-	DROP TABLE #temp_analytics_reports
-
-	SELECT rp.report_id AS id
-		,70 AS author_id
-		,47 AS grade_id
-		,rp.bane_position_id AS position_id
-		,'analytics-pro' AS [type]
-		,0 AS submitted
-		,rp.created_at
-		,rp.updated_at
-		,rp.bane_player_id AS player_id
-		,rp.alignment
-		,0 AS [imported_with_errors]
-		,0 AS [is_deleted]
-		,'' AS [exposure]
-		,NULL [import_key]
-		,NULL AS [revised_overall_grade_id]
-		,'5.9' AS [legacy_grade]
-		,NULL [stratbridge_season_id]
-		,0 AS [incomplete]
-		,NULL AS [all_star_game_id]
-	INTO #temp_analytics_reports
-	FROM #temp_report_positions rp
-
-
-
-
-
-	SELECT *
-	FROM #temp_analytics_reports
-
-	SELECT *
-	FROM #temp_analytics_evaluations_with_ids
