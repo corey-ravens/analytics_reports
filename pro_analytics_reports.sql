@@ -10,9 +10,10 @@ v4 is the almost finalized version where dunamic ids are done at the end, and ad
 v5 is just a slight tweak on v4, where you are manually inserting grades and summaries because those auto tables aren't ready yet. Can loook back at v4 once those are done.
 v6 adds burst.
 v7 adds sorting position alignment by snap count high to low.
-v8 updates the new skill ids
+V8 updates the new skill ids
 v9 orders positions from most to least played
 v10 adds skill codes
+v11 adds model grades
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
@@ -44,9 +45,12 @@ OUTPUT TABLES:
 		,nfl_player_id
 		,season
 		,season_type_adjusted
-		,position_blt
+		,CASE WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DIME'
+			ELSE position_blt
+		END AS position_blt
 		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
 			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
+			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DB'
 			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
 			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
 			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
@@ -97,6 +101,7 @@ OUTPUT TABLES:
 		,position_blt
 		,CASE WHEN position_blt IN ('NT','DT3T') THEN 'DT'
 			WHEN position_blt IN ('OB34','RUSH','SAM','DE43') THEN 'EDGE'
+			WHEN position_blt IN ('IB','MIKE','WILL') AND po.translation = 'DS' THEN 'DB'
 			WHEN position_blt IN ('IB','MIKE','WILL') THEN 'IB'
 			WHEN position_blt IN ('CB','NB','FS','SS','DS') THEN 'DB'
 			WHEN position_blt IN ('LOT','LOG','OC','ROG','ROT') THEN 'OL'
@@ -306,6 +311,8 @@ Skill IDs of 06/13/2020:
 1586 - endurance (A-END)
 1609 - strength/explosion (A-STR/EXPL)
 
+Strength /Explosion not ready yet as of 09/10/2020, taking it out.
+
 OUTPUT TABLES:
 #temp_analytics_evaluations
 
@@ -326,15 +333,15 @@ OUTPUT TABLES:
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON rp.bane_player_id = pl.id
 		AND pl.is_deleted = 0
-	INNER JOIN AnalyticsWork.dbo.endurance_work_rate_grades_summarized en
-		ON pl.nfl_gsis_id = en.gsis_id
+	INNER JOIN Analytics.dbo.analysis_players_season_endurance_work_rates en
+		ON pl.id = en.bane_player_id
 		AND rp.season = en.season
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
 		ON en.endurance_grade = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
 
-
+/*
 	INSERT INTO #temp_analytics_evaluations 	
 	SELECT bane_player_id
 		,rp.season
@@ -350,14 +357,14 @@ OUTPUT TABLES:
 	INNER JOIN BaneProductionAnalytics.dbo.players pl
 		ON rp.bane_player_id = pl.id
 		AND pl.is_deleted = 0
-	INNER JOIN AnalyticsWork.dbo.endurance_work_rate_grades_summarized en
-		ON pl.nfl_gsis_id = en.gsis_id
+	INNER JOIN Analytics.dbo.analysis_players_season_endurance_work_rates en
+		ON pl.id = en.bane_player_id
 		AND rp.season = en.season
 	INNER JOIN BaneProductionAnalytics.dbo.grades gr
 		ON en.work_rate_grade = gr.[value]
 		AND gr.scale_id = 5
 		AND gr.active = 1
-
+*/
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -522,48 +529,6 @@ OUTPUT TABLES:
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-(2)(e)
-
-Manually insert the final summaries into the evaluations table.
-
-As of 06/14/2020 skill ids:
-1611 - final summary (A-FINAL)
-1612 - final summary update (A-FINALUPD)
-1613 - revised final summary (A-RFS)
-1614 - workout/misc. notes (A-MISCNOTES)
-
-OUTPUT TABLES:
-#temp_analytics_evaluations
-
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	INSERT INTO #temp_analytics_evaluations VALUES
-	--([bane_player_id],[season],[season_type_adjusted],[skill_id],[skill_code],[grade_id],[explanation])
-	(7037,2019,'REGPOST',1611,'A-FINAL',NULL,'Vinny is a potential low cost signing with some pass rush upside.  In 2019, he was a very good pass rusher by both stats and NGS and was a very good tackler to go along with it.  He is typically inconsistent in both tackling and run defense, sometimes showing very good performance but not holding it through year to year.')
-	,(61386,2019,'REGPOST',1611,'A-FINAL',NULL,'Joey is the top DE in the league.  He is consistently at the top of the league in pressure rate, and in 3 of the last 4 years was also one of the most active DEs in the league in terms of making extra tackles.  While not a consistent top tier run defender, he has never been worst than inconsistent, and was oustanding in 2019.')
-	,(3957,2019,'REGPOST',1611,'A-FINAL',NULL,'Byron is a solid starter who seems to be improving his coverage skills.  After three years of inconsistent coverage, he was very good in 2018 and oustanding in 2019.  Byron is inconsistent at both playing the ball and tackling. He is one of the fastest DBs in the league. While the improving coverage skills are promising, he does not look to be worth a top tier contract.')
-	,(64417,2019,'REGPOST',1611,'A-FINAL',NULL,'Maliek is a potential low cost signing with interior pass rush upside.  He was a very good pass rusher in 2019, but had been inconsistent or worse in his previous seasons.  He is a poor tackler and a poor run defender.')
-	,(203146,2019,'REGPOST',1611,'A-FINAL',NULL,'Matt is a solid starter who flashes playmaking ability.  He has been a very good or outstanding pass rusher the last two seasons, but it is important to note he leads the NFL in unblocked pressures the last two seasons.  This could indicate schemed up pressure moreso than personally generated pressure.  Matt is an inconsistent tackler and run defender.  He is an outstanding playmaker.')
-	,(2698,2019,'REGPOST',1611,'A-FINAL',NULL,'Ha Ha is a capable safety who should provide good value for a low cost.  He has a history of outstanding or very good coverage.  He has been an inconsistent tackler most of his career, but has shown ability to be better a few seasons.  In 2019 he showed inconsistent ball skills, but had historically been very good in that area.')
-	,(58798,2019,'REGPOST',1611,'A-FINAL',NULL,'Derrick is a capabale starting running back.  Our statistics do not like Derrick as much as traditional measures do.  He was inconsistent at avoiding tackles and poor as both as pass catcher and pass protector.  It looks like a lot of his raw rushing totals came as a result of a good offensive line.  He does have very good endurance.')
-	,(35702,2019,'REGPOST',1611,'A-FINAL',NULL,'Keenan a high impact player.  He has had very good or outstanding receivng production and outstanding hands his entire career.  He is inconsistent after the catch and as a run blocker.  He is slow, so his production likely comes from route skills rather than speed.')
-	,(4376,2019,'REGPOST',1611,'A-FINAL',NULL,'Nick is a solid starter. He is an outstanding run blocker year in and year out.  He is inconsistent as a receiver and after the catch.')
-	,(2606,2019,'REGPOST',1611,'A-FINAL',NULL,'Todd is a hgh impact player. He has always been a very good or outstanding tackler and was outstanding in coverage last year. He was also very good at making plays, but was an inconsistent run defender.')
-	,(197847,2019,'REGPOST',1611,'A-FINAL',NULL,'Dak is a high impact, potential Pro Bowl QB.  He has been very good at completing more passes than we''d expect for his entire career.  He was oustanding at making plays in 2019.')
-	,(71767,2019,'REGPOST',1611,'A-FINAL',NULL,'Brad is a solid starter. He was a very good run blocker and an inconsistent pass blocker in 2019 - both were large improvements over 2018.  He looks like a hard worker.')
-	--,(35287,2019,'REGPOST',1611,'A-FINAL',NULL,'Antoine is a capable starter. He has a history of being an outstanding tackler. - both were large improvements over 2018.  He looks like a hard worker.')
-/*
-	select ev.*,gr.[value]
-	from #temp_analytics_evaluations ev
-	inner join BaneProductionAnalytics.dbo.grades gr
-	on ev.grade_id = gr.id
-	where bane_player_id = 2606
-	and season_type_adjusted = 'regpost'
-	order by skill_id,season
-*/
-
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
 (3)
 
 
@@ -578,34 +543,108 @@ OUTPUT TABLES:
 	IF OBJECT_ID('tempdb..#temp_analytics_grades') IS NOT NULL
 	DROP TABLE #temp_analytics_grades
 
-	CREATE TABLE #temp_analytics_grades (
-		bane_player_id INT
-		,season INT
-		,season_type_adjusted NVARCHAR(7)
-		,author_id INT
-		,grade_id INT
-	)
+	SELECT bane_player_id
+		,season
+		,'REGPOST' AS season_type_adjusted
+		,70 AS author_id
+		,grade_id
+	INTO #temp_analytics_grades
+	FROM Analytics.dbo.analysis_players_pro_model_grades
 
 
-	INSERT INTO #temp_analytics_grades VALUES
-	--([bane_player_id],[season],[season_type_adjusted],[author_id],[grade_id])
-	(7037,2019,'REGPOST',70,48)
-	,(61386,2019,'REGPOST',70,40)
-	,(3957,2019,'REGPOST',70,46)
-	,(64417,2019,'REGPOST',70,48)
-	,(203146,2019,'REGPOST',70,45)
-	,(2698,2019,'REGPOST',70,46)
-	,(58798,2019,'REGPOST',70,46)
-	,(35702,2019,'REGPOST',70,43)
-	,(4376,2019,'REGPOST',70,45)
-	,(2606,2019,'REGPOST',70,43)
-	,(197847,2019,'REGPOST',70,42)
-	,(71767,2019,'REGPOST',70,45)
+	--(7037,2019,'REGPOST',70,48)
+	--,(61386,2019,'REGPOST',70,40)
+	--,(3957,2019,'REGPOST',70,46)
+	--,(64417,2019,'REGPOST',70,48)
+	--,(203146,2019,'REGPOST',70,45)
+	--,(2698,2019,'REGPOST',70,46)
+	--,(58798,2019,'REGPOST',70,46)
+	--,(35702,2019,'REGPOST',70,43)
+	--,(4376,2019,'REGPOST',70,45)
+	--,(2606,2019,'REGPOST',70,43)
+	--,(197847,2019,'REGPOST',70,42)
+	--,(71767,2019,'REGPOST',70,45)
 	--,(35287,2019,'REGPOST',70,46)
-	
+
+
 /*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 (4)
+
+Insert blank final summaries into the evaluations table that you can fill in with text later.
+
+As of 06/14/2020 skill ids:
+1611 - final summary (A-FINAL)
+1612 - final summary update (A-FINALUPD)
+1613 - revised final summary (A-RFS)
+1614 - workout/misc. notes (A-MISCNOTES)
+
+OUTPUT TABLES:
+#temp_analytics_evaluations
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	INSERT INTO #temp_analytics_evaluations
+	SELECT bane_player_id
+		,season
+		,'REGPOST' AS season_type_adjusted
+		,1611 AS skill_id
+		,'A-FINAL' AS skill_code
+		,NULL AS grade_id
+		,'' AS explanation
+	FROM Analytics.dbo.analysis_players_pro_model_grades
+
+
+UPDATE #temp_analytics_evaluations
+SET explanation = 'Vinny is a potential low cost signing with some pass rush upside.  In 2019, he was a very good pass rusher by both stats and NGS and was a very good tackler to go along with it.  He is typically inconsistent in both tackling and run defense, sometimes showing very good performance but not holding it through year to year.'
+WHERE bane_player_id = 7037
+	AND skill_id = 1611
+
+UPDATE #temp_analytics_evaluations
+SET explanation = 'Matt is a solid starter who flashes playmaking ability.  He has been a very good or outstanding pass rusher the last two seasons, but it is important to note he leads the NFL in unblocked pressures the last two seasons.  This could indicate schemed up pressure moreso than personally generated pressure.  Matt is an inconsistent tackler and run defender.  He is an outstanding playmaker.'
+WHERE bane_player_id = 203146
+	AND skill_id = 1611
+
+UPDATE #temp_analytics_evaluations
+SET explanation = 'Ha Ha is a capable safety who should provide good value for a low cost.  He has a history of very good and sometimes outstanding coverage.  He has been an inconsistent tackler most of his career, but has had some very good seasons.  In 2019 he showed inconsistent ball skills, but had historically been very good in that area.'
+WHERE bane_player_id = 2698
+	AND skill_id = 1611
+
+UPDATE #temp_analytics_evaluations
+SET explanation = 'Dak is a high impact, potential Pro Bowl QB.  He has been very good at completing more passes than we''d expect for his entire career.  He was oustanding at making plays in 2019.'
+WHERE bane_player_id = 197847
+	AND skill_id = 1611
+
+UPDATE #temp_analytics_evaluations
+SET explanation = 'Antoine is a capable starter. He has a history of being an outstanding tackler. - both were large improvements over 2018.  He looks like a hard worker.'
+WHERE bane_player_id = 35287
+	AND skill_id = 1611
+
+
+	--INSERT INTO #temp_analytics_evaluations VALUES
+	--([bane_player_id],[season],[season_type_adjusted],[skill_id],[skill_code],[grade_id],[explanation])
+	--,(61386,2019,'REGPOST',1611,'A-FINAL',NULL,'Joey is the top DE in the league.  He is consistently at the top of the league in pressure rate, and in 3 of the last 4 years was also one of the most active DEs in the league in terms of making extra tackles.  While not a consistent top tier run defender, he has never been worst than inconsistent, and was oustanding in 2019.')
+	--,(3957,2019,'REGPOST',1611,'A-FINAL',NULL,'Byron is a solid starter who seems to be improving his coverage skills.  After three years of inconsistent coverage, he was very good in 2018 and oustanding in 2019.  Byron is inconsistent at both playing the ball and tackling. He is one of the fastest DBs in the league. While the improving coverage skills are promising, he does not look to be worth a top tier contract.')
+	--,(64417,2019,'REGPOST',1611,'A-FINAL',NULL,'Maliek is a potential low cost signing with interior pass rush upside.  He was a very good pass rusher in 2019, but had been inconsistent or worse in his previous seasons.  He is a poor tackler and a poor run defender.')
+	--,(58798,2019,'REGPOST',1611,'A-FINAL',NULL,'Derrick is a capabale starting running back.  Our statistics do not like Derrick as much as traditional measures do.  He was inconsistent at avoiding tackles and poor as both as pass catcher and pass protector.  It looks like a lot of his raw rushing totals came as a result of a good offensive line.  He does have very good endurance.')
+	--,(35702,2019,'REGPOST',1611,'A-FINAL',NULL,'Keenan a high impact player.  He has had very good or outstanding receivng production and outstanding hands his entire career.  He is inconsistent after the catch and as a run blocker.  He is slow, so his production likely comes from route skills rather than speed.')
+	--,(4376,2019,'REGPOST',1611,'A-FINAL',NULL,'Nick is a solid starter. He is an outstanding run blocker year in and year out.  He is inconsistent as a receiver and after the catch.')
+	--,(2606,2019,'REGPOST',1611,'A-FINAL',NULL,'Todd is a hgh impact player. He has always been a very good or outstanding tackler and was outstanding in coverage last year. He was also very good at making plays, but was an inconsistent run defender.')
+	--,(71767,2019,'REGPOST',1611,'A-FINAL',NULL,'Brad is a solid starter. He was a very good run blocker and an inconsistent pass blocker in 2019 - both were large improvements over 2018.  He looks like a hard worker.')
+
+/*
+	select ev.*,gr.[value]
+	from #temp_analytics_evaluations ev
+	inner join BaneProductionAnalytics.dbo.grades gr
+	on ev.grade_id = gr.id
+	where bane_player_id = 2606
+	and season_type_adjusted = 'regpost'
+	order by skill_id,season
+*/
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+(5)
 
 
 Add the new reports into the reports table.  Create a temp one first so you have the report ids to join the evaluations to, because the official analytics_reports
